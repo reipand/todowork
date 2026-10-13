@@ -13,6 +13,21 @@ import { decodeRowFromStorage, getDatabase } from '@/lib/db/schema';
 import { useActiveUserId } from '@/features/auth/session-context';
 
 /**
+ * Reads the project id from the browser URL.
+ *
+ * In a static export with a rewrite fallback, `useParams()` can return the build-time sentinel
+ * `_` even after mount, because the router sees the statically-generated path. Reading
+ * `window.location.pathname` is the reliable source of truth for the real id.
+ */
+function readProjectIdFromPath(): string | null {
+  if (typeof window === 'undefined') return null;
+  const match = window.location.pathname.match(/^\/projects\/([^/]+)/);
+  const captured = match?.[1];
+  if (!captured || captured === '_') return null;
+  return captured;
+}
+
+/**
  * Project detail (client).
  *
  * Reads the id from the URL rather than from server params, because the route is exported with a
@@ -22,16 +37,21 @@ import { useActiveUserId } from '@/features/auth/session-context';
 
 export function ProjectDetailClient() {
   const params = useParams<{ id: string }>();
-  const rawId = typeof params?.id === 'string' ? params.id : null;
+  const paramId = typeof params?.id === 'string' ? params.id : null;
   const userId = useActiveUserId();
 
-  // The gate. Until the component has mounted, `rawId` may still be the build-time sentinel, and
-  // any read against it would either miss or briefly render the wrong project. Render the skeleton
-  // until mount resolves, then trust the URL.
+  // The gate. Until the component has mounted, params may still be the build-time sentinel, and
+  // any read against it would either miss or briefly render the wrong project.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const id = mounted ? rawId : null;
+  // Prefer the router param, but fall back to the URL pathname when the param is still the
+  // sentinel `_` — which happens on static-export rewrite fallbacks.
+  const id = mounted
+    ? paramId && paramId !== '_'
+      ? paramId
+      : readProjectIdFromPath()
+    : null;
 
   const project = useLiveQuery(
     async () => {
