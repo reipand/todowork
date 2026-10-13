@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from 'next/font/google';
 import { SpeedInsights } from '@vercel/speed-insights/next';
 
 import { AppProviders } from '@/components/layout/app-providers';
+import { RegisterSW } from '@/components/pwa/register-sw';
 import '@/styles/tokens.css';
 import './globals.css';
 
@@ -116,6 +117,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         <AppProviders>{children}</AppProviders>
 
+        <RegisterSW />
         <SpeedInsights />
       </body>
     </html>

@@ -730,24 +730,12 @@ export async function forcePushAll(
 ): Promise<{ queued: number; pushed: number; failed: number; conflicts: number }> {
   const db = getDatabase();
   let queued = 0;
+  let totalPushed = 0;
+  let totalFailed = 0;
+  let totalConflicts = 0;
 
-  // Tasks
-  const tasks = await liveRowsFor(db.tasks, userId);
-  for (const task of tasks) {
-    if (await hasPendingMutationFor(task.id)) continue;
-    await db.mutations.put(
-      buildMutation(userId, {
-        entityType: 'task',
-        entityId: task.id,
-        operation: 'create',
-        payload: toSyncPayload(asPayload(task), 'task'),
-        baseRevision: null,
-      }),
-    );
-    queued += 1;
-  }
-
-  // Projects
+  // Phase 1: Projects and tags have no FK dependencies — push them first so tasks can reference
+  // projects and task_tags can reference tags.
   const projects = await liveRowsFor(db.projects, userId);
   for (const project of projects) {
     if (await hasPendingMutationFor(project.id)) continue;
@@ -763,7 +751,6 @@ export async function forcePushAll(
     queued += 1;
   }
 
-  // Tags
   const tags = await liveRowsFor(db.tags, userId);
   for (const tag of tags) {
     if (await hasPendingMutationFor(tag.id)) continue;
@@ -779,7 +766,39 @@ export async function forcePushAll(
     queued += 1;
   }
 
-  // Subtasks
+  if (queued > 0) {
+    const report = await sync({ userId, deviceId });
+    totalPushed += report.pushedCount;
+    totalFailed += report.failedCount;
+    totalConflicts += report.conflictCount;
+  }
+
+  // Phase 2: Tasks FK to projects. Push after projects exist in Supabase.
+  let phase2 = 0;
+  const tasks = await liveRowsFor(db.tasks, userId);
+  for (const task of tasks) {
+    if (await hasPendingMutationFor(task.id)) continue;
+    await db.mutations.put(
+      buildMutation(userId, {
+        entityType: 'task',
+        entityId: task.id,
+        operation: 'create',
+        payload: toSyncPayload(asPayload(task), 'task'),
+        baseRevision: null,
+      }),
+    );
+    phase2 += 1;
+  }
+
+  if (phase2 > 0) {
+    const report = await sync({ userId, deviceId });
+    totalPushed += report.pushedCount;
+    totalFailed += report.failedCount;
+    totalConflicts += report.conflictCount;
+  }
+
+  // Phase 3: Subtasks FK to tasks. Task-tags FK to tasks and tags. Push last.
+  let phase3 = 0;
   const subtasks = await liveRowsFor(db.subtasks, userId);
   for (const subtask of subtasks) {
     if (await hasPendingMutationFor(subtask.id)) continue;
@@ -792,10 +811,9 @@ export async function forcePushAll(
         baseRevision: null,
       }),
     );
-    queued += 1;
+    phase3 += 1;
   }
 
-  // Task-tag links
   const taskTagRows = await db.taskTags.where('user_id').equals(userId).toArray();
   const liveTaskTags = decodeRowsFromStorage(taskTagRows);
   for (const tt of liveTaskTags) {
@@ -809,19 +827,23 @@ export async function forcePushAll(
         baseRevision: null,
       }),
     );
-    queued += 1;
+    phase3 += 1;
   }
 
-  if (queued === 0) {
-    return { queued: 0, pushed: 0, failed: 0, conflicts: 0 };
+  queued += phase2 + phase3;
+
+  if (phase3 > 0) {
+    const report = await sync({ userId, deviceId });
+    totalPushed += report.pushedCount;
+    totalFailed += report.failedCount;
+    totalConflicts += report.conflictCount;
   }
 
-  const report = await sync({ userId, deviceId });
   return {
     queued,
-    pushed: report.pushedCount,
-    failed: report.failedCount,
-    conflicts: report.conflictCount,
+    pushed: totalPushed,
+    failed: totalFailed,
+    conflicts: totalConflicts,
   };
 }
 
