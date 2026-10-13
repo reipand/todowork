@@ -3,15 +3,17 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, RefreshCw, RotateCcw, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, RefreshCw, RotateCcw, TriangleAlert, Upload } from 'lucide-react';
 
 import { PageContent, PageHeader, SectionHeading } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/dialog';
 import { EmptyState, Skeleton } from '@/components/ui/states';
 import { useSyncStatus } from '@/components/ui/sync-indicator';
 import { useToast } from '@/components/ui/toast';
-import { useActiveUserId, useIsCloudAccount } from '@/features/auth/session-context';
+import { useActiveUserId, useIsCloudAccount, useSession } from '@/features/auth/session-context';
 import { decodeRowFromStorage, getDatabase } from '@/lib/db/schema';
+import { forcePushAll, readPullCursor, resetPullCursor } from '@/features/sync/engine';
 import { cn } from '@/lib/utils';
 import type { SyncConflict } from '@/types/domain';
 
@@ -30,12 +32,17 @@ import type { SyncConflict } from '@/types/domain';
 export default function SyncSettingsPage() {
   const userId = useActiveUserId();
   const isCloudAccount = useIsCloudAccount();
+  const { deviceId } = useSession();
   const { phase, pendingCount, failedCount, conflictCount, lastSyncedAt, triggerSync, retryFailed, isSyncing } =
     useSyncStatus();
   const { toast } = useToast();
 
   const [syncing, setSyncing] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [forcePushing, setForcePushing] = useState(false);
+  const [resettingCursor, setResettingCursor] = useState(false);
+  const [forcePushOpen, setForcePushOpen] = useState(false);
+  const [resetCursorOpen, setResetCursorOpen] = useState(false);
 
   const conflicts = useLiveQuery(
     async () => {
@@ -45,6 +52,29 @@ export default function SyncSettingsPage() {
         .filter((row) => row.resolved_at === null)
         .sort((a, b) => b.detected_at.localeCompare(a.detected_at));
     },
+    [userId],
+    undefined,
+  );
+
+  const localCounts = useLiveQuery(
+    async () => {
+      const db = getDatabase();
+      const [tasks, projects, tags, subtasks, taskTags, mutations] = await Promise.all([
+        db.tasks.where('user_id').equals(userId).count(),
+        db.projects.where('user_id').equals(userId).count(),
+        db.tags.where('user_id').equals(userId).count(),
+        db.subtasks.where('user_id').equals(userId).count(),
+        db.taskTags.where('user_id').equals(userId).count(),
+        db.mutations.where('[user_id+status]').equals([userId, 'pending']).count(),
+      ]);
+      return { tasks, projects, tags, subtasks, taskTags, pendingMutations: mutations };
+    },
+    [userId],
+    undefined,
+  );
+
+  const cursor = useLiveQuery(
+    () => readPullCursor(userId),
     [userId],
     undefined,
   );
@@ -70,6 +100,35 @@ export default function SyncSettingsPage() {
       toast('Could not re-queue failed changes.', { tone: 'danger' });
     } finally {
       setRetrying(false);
+    }
+  };
+
+  const handleForcePush = async (): Promise<void> => {
+    setForcePushing(true);
+    try {
+      const result = await forcePushAll(userId, deviceId);
+      toast(
+        `Pushed ${result.pushed} of ${result.queued} items to cloud.${result.failed > 0 ? ` ${result.failed} failed.` : ''}${result.conflicts > 0 ? ` ${result.conflicts} conflicts.` : ''}`,
+        result.failed > 0 ? { tone: 'danger' } : { tone: 'success' },
+      );
+    } catch {
+      toast('Force push failed. Check your connection and try again.', { tone: 'danger' });
+    } finally {
+      setForcePushing(false);
+      setForcePushOpen(false);
+    }
+  };
+
+  const handleResetCursor = async (): Promise<void> => {
+    setResettingCursor(true);
+    try {
+      await resetPullCursor(userId);
+      toast('Pull cursor reset. Next sync will pull everything from the server.', { tone: 'success' });
+    } catch {
+      toast('Could not reset pull cursor.', { tone: 'danger' });
+    } finally {
+      setResettingCursor(false);
+      setResetCursorOpen(false);
     }
   };
 
@@ -205,8 +264,81 @@ export default function SyncSettingsPage() {
               </div>
             )}
           </section>
+
+          {/* Diagnostics ----------------------------------------------------------- */}
+          <section aria-label="Diagnostics">
+            <SectionHeading as="h2">Diagnostics</SectionHeading>
+
+            <div className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4">
+              <p className="text-meta text-ink-muted">
+                Tools for fixing sync issues. Force Push creates upload mutations for every local row
+                and sends them to the server — use it when data exists on this device but never reached
+                the cloud. Reset Cursor makes the next sync pull everything from the server again.
+              </p>
+
+              {localCounts === undefined ? (
+                <Skeleton className="h-16 w-full rounded-control" />
+              ) : (
+                <dl className="grid grid-cols-3 gap-3">
+                  <Stat label="Tasks" value={localCounts.tasks} />
+                  <Stat label="Projects" value={localCounts.projects} />
+                  <Stat label="Tags" value={localCounts.tags} />
+                  <Stat label="Subtasks" value={localCounts.subtasks} />
+                  <Stat label="Tag links" value={localCounts.taskTags} />
+                  <Stat label="Queued" value={localCounts.pendingMutations} />
+                </dl>
+              )}
+
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-meta text-ink-muted">Pull cursor</span>
+                <span className="text-body tabular text-ink">{cursor ?? '—'}</span>
+              </div>
+
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant="primary"
+                  onClick={() => setForcePushOpen(true)}
+                  loading={forcePushing}
+                  disabled={forcePushing || syncing || isSyncing}
+                >
+                  <Upload aria-hidden="true" className="h-4 w-4" />
+                  Force push all local data
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => setResetCursorOpen(true)}
+                  loading={resettingCursor}
+                  disabled={resettingCursor || syncing || isSyncing}
+                >
+                  <RotateCcw aria-hidden="true" className="h-4 w-4" />
+                  Reset pull cursor
+                </Button>
+              </div>
+            </div>
+          </section>
         </div>
       </PageContent>
+
+      <ConfirmDialog
+        open={forcePushOpen}
+        onClose={() => setForcePushOpen(false)}
+        onConfirm={() => void handleForcePush()}
+        title="Force push all local data?"
+        description="This creates an upload mutation for every task, project, tag, subtask, and tag link on this device, then syncs. Rows that already exist on the server will be updated; new rows will be created. This may take a moment for large datasets."
+        confirmLabel="Force push"
+        busy={forcePushing}
+      />
+
+      <ConfirmDialog
+        open={resetCursorOpen}
+        onClose={() => setResetCursorOpen(false)}
+        onConfirm={() => void handleResetCursor()}
+        title="Reset pull cursor?"
+        description="The next sync will pull every row from the server from revision 0. This is useful if local data is missing rows that exist on the server. It will not delete local data — existing rows will be refreshed."
+        confirmLabel="Reset cursor"
+        busy={resettingCursor}
+      />
     </>
   );
 }

@@ -1,13 +1,14 @@
-import { getDatabase, type LocalTask } from '@/lib/db/schema';
+import { getDatabase, liveRowsFor, decodeRowsFromStorage, type LocalTask } from '@/lib/db/schema';
 import { nowIsoSafe } from '@/lib/db/helpers';
 import { newId } from '@/lib/db/helpers';
-import type { Mutation, SyncConflict, SyncReport } from '@/types/domain';
+import type { Mutation, SyncConflict, SyncEntityType, SyncReport } from '@/types/domain';
 import {
   applyRemoteProject,
   applyRemoteSubtask,
   applyRemoteTag,
   applyRemoteTask,
   applyRemoteTaskTag,
+  buildMutation,
   hasPendingMutationFor,
 } from '@/lib/db/repositories';
 import { computeBackoffMs, MAX_MUTATION_RETRIES } from '@/lib/utils';
@@ -674,4 +675,162 @@ export async function resetSyncState(userId: string): Promise<void> {
 
     await db.syncMeta.delete(`sync-meta:${userId}`);
   });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * Force push and cursor reset
+ *
+ * These exist for the case where local data exists but never made it to the server — typically
+ * guest-mode data that was migrated to an authenticated account without creating mutations, or
+ * data left behind by failed mutations that were dropped. The normal sync cycle only pushes
+ * queued mutations, so rows without mutations are invisible to it.
+ * ------------------------------------------------------------------------------------- */
+
+/** Fields that exist only in the local Dexie schema, not in the Supabase tables. */
+const STRIP_ALWAYS = new Set(['sync_state', 'local_updated_at', 'revision']);
+
+/**
+ * Strips local-only fields from a row so the payload matches the Supabase table schema.
+ *
+ * `completed` on a Task is a local boolean; the Supabase `tasks` table uses `completed_at`
+ * (timestamptz) and `status` (text). `updated_at` does not exist on `task_tags`. Including
+ * either would make PostgREST reject the upsert with a 400.
+ */
+function toSyncPayload(
+  row: Record<string, unknown>,
+  entityType: SyncEntityType,
+): Record<string, unknown> {
+  const strip = new Set(STRIP_ALWAYS);
+  if (entityType === 'task') strip.add('completed');
+  if (entityType === 'task_tag') strip.add('updated_at');
+
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (!strip.has(k)) out[k] = v;
+  }
+  return out;
+}
+
+/** Cast helper: typed row → Record for payload stripping. */
+function asPayload(row: object): Record<string, unknown> {
+  return row as unknown as Record<string, unknown>;
+}
+
+/**
+ * Creates a 'create' mutation for every live local row that does not already have a pending
+ * mutation, then runs a full sync cycle.
+ *
+ * The upsert in `applyCreate` uses `onConflict: 'id'`, so a row that already exists on the
+ * server is updated rather than duplicated. The `touch_revision` trigger increments the
+ * revision on update, so other devices will pull the refreshed data.
+ */
+export async function forcePushAll(
+  userId: string,
+  deviceId: string,
+): Promise<{ queued: number; pushed: number; failed: number; conflicts: number }> {
+  const db = getDatabase();
+  let queued = 0;
+
+  // Tasks
+  const tasks = await liveRowsFor(db.tasks, userId);
+  for (const task of tasks) {
+    if (await hasPendingMutationFor(task.id)) continue;
+    await db.mutations.put(
+      buildMutation(userId, {
+        entityType: 'task',
+        entityId: task.id,
+        operation: 'create',
+        payload: toSyncPayload(asPayload(task), 'task'),
+        baseRevision: null,
+      }),
+    );
+    queued += 1;
+  }
+
+  // Projects
+  const projects = await liveRowsFor(db.projects, userId);
+  for (const project of projects) {
+    if (await hasPendingMutationFor(project.id)) continue;
+    await db.mutations.put(
+      buildMutation(userId, {
+        entityType: 'project',
+        entityId: project.id,
+        operation: 'create',
+        payload: toSyncPayload(asPayload(project), 'project'),
+        baseRevision: null,
+      }),
+    );
+    queued += 1;
+  }
+
+  // Tags
+  const tags = await liveRowsFor(db.tags, userId);
+  for (const tag of tags) {
+    if (await hasPendingMutationFor(tag.id)) continue;
+    await db.mutations.put(
+      buildMutation(userId, {
+        entityType: 'tag',
+        entityId: tag.id,
+        operation: 'create',
+        payload: toSyncPayload(asPayload(tag), 'tag'),
+        baseRevision: null,
+      }),
+    );
+    queued += 1;
+  }
+
+  // Subtasks
+  const subtasks = await liveRowsFor(db.subtasks, userId);
+  for (const subtask of subtasks) {
+    if (await hasPendingMutationFor(subtask.id)) continue;
+    await db.mutations.put(
+      buildMutation(userId, {
+        entityType: 'subtask',
+        entityId: subtask.id,
+        operation: 'create',
+        payload: toSyncPayload(asPayload(subtask), 'subtask'),
+        baseRevision: null,
+      }),
+    );
+    queued += 1;
+  }
+
+  // Task-tag links
+  const taskTagRows = await db.taskTags.where('user_id').equals(userId).toArray();
+  const liveTaskTags = decodeRowsFromStorage(taskTagRows);
+  for (const tt of liveTaskTags) {
+    if (await hasPendingMutationFor(tt.id)) continue;
+    await db.mutations.put(
+      buildMutation(userId, {
+        entityType: 'task_tag',
+        entityId: tt.id,
+        operation: 'create',
+        payload: toSyncPayload(asPayload(tt), 'task_tag'),
+        baseRevision: null,
+      }),
+    );
+    queued += 1;
+  }
+
+  if (queued === 0) {
+    return { queued: 0, pushed: 0, failed: 0, conflicts: 0 };
+  }
+
+  const report = await sync({ userId, deviceId });
+  return {
+    queued,
+    pushed: report.pushedCount,
+    failed: report.failedCount,
+    conflicts: report.conflictCount,
+  };
+}
+
+/** Resets the pull cursor to 0 so the next sync pulls every row from the server. */
+export async function resetPullCursor(userId: string): Promise<void> {
+  await writeCursor(userId, 0, { pulledAt: nowIsoSafe() });
+}
+
+/** Reads the current pull cursor for display. */
+export async function readPullCursor(userId: string): Promise<number> {
+  return readCursor(userId);
 }
