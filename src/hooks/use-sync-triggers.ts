@@ -29,7 +29,7 @@ export interface SyncTriggerOptions {
 }
 
 export function useSyncTriggers(options: SyncTriggerOptions): void {
-  const { userId, deviceId, paused = false, intervalMs = 5 * 60 * 1000 } = options;
+  const { userId, deviceId, paused = false, intervalMs = 30 * 1000 } = options;
 
   // Tracks the last trigger so rapid duplicate events collapse into one run.
   const lastTriggerRef = useRef<number>(0);
@@ -45,9 +45,9 @@ export function useSyncTriggers(options: SyncTriggerOptions): void {
 
     const runSync = (reason: string): void => {
       const now = Date.now();
-      // 2s collapse window. Long enough to absorb an event burst, short enough that a user tapping
-      // Sync right after opening the app still gets a run.
-      if (now - lastTriggerRef.current < 2000) return;
+      // 500ms collapse window. Long enough to absorb an event burst, short enough that a
+      // realtime push from another device feels instant.
+      if (now - lastTriggerRef.current < 500) return;
       lastTriggerRef.current = now;
 
       void sync({
@@ -83,10 +83,14 @@ export function useSyncTriggers(options: SyncTriggerOptions): void {
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
+    // Trigger 3b: window focus. Catches cases where visibilitychange does not fire but the user
+    // clicked back into the PWA window.
+    const handleFocus = (): void => runSync('focus');
+    window.addEventListener('focus', handleFocus);
+
     // Trigger 4: periodic backstop. Exists because a device can hold stale data with no event to
     // announce it: another device may have changed something while this one sat idle and online.
-    // Five minutes is chosen as a compromise that keeps multi-device freshness without hammering
-    // the API from every open tab.
+    // 30 seconds keeps cross-device freshness high without hammering the API from every open tab.
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'visible') runSync('interval');
     }, intervalMs);
@@ -116,6 +120,7 @@ export function useSyncTriggers(options: SyncTriggerOptions): void {
     return () => {
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
       window.clearInterval(intervalId);
       if (supabase && channel) {
         void supabase.removeChannel(channel);
