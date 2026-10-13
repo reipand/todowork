@@ -1,10 +1,10 @@
 'use client';
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, LogIn, LogOut, Trash2 } from 'lucide-react';
+import { ChevronRight, Download, LogIn, LogOut, Trash2, Upload } from 'lucide-react';
 
 import { PageContent, PageHeader, SectionHeading } from '@/components/layout/page-header';
 import { ConfirmDialog } from '@/components/ui/dialog';
@@ -15,6 +15,13 @@ import { useIsCloudAccount, useSession } from '@/features/auth/session-context';
 import { requestAccountDeletion } from '@/features/auth/service';
 import { destroyLocalDatabase, getDatabase } from '@/lib/db/schema';
 import { useTheme, type ThemePreference } from '@/features/settings/theme-context';
+import { sync } from '@/features/sync/engine';
+import {
+  downloadJSON,
+  exportUserData,
+  importUserData,
+  parseExportFile,
+} from '@/lib/utils/export-import';
 import { cn } from '@/lib/utils';
 
 /**
@@ -39,6 +46,10 @@ export default function SettingsPage() {
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [removeDataOpen, setRemoveDataOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  // Hidden file input ref for import.
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Counts for the Data section. Read from Dexie so they are accurate offline and update the
   // instant a change lands. `undefined` while the first read is in flight.
@@ -100,6 +111,49 @@ export default function SettingsPage() {
       setBusy(false);
       setRemoveDataOpen(false);
       toast('Could not remove local data. Reload the page and try again.', { tone: 'danger' });
+    }
+  };
+
+  const handleExport = async (): Promise<void> => {
+    if (!user) return;
+    try {
+      const data = await exportUserData(user.id);
+      const date = new Date().toISOString().slice(0, 10);
+      downloadJSON(data, `todowork-${date}.json`);
+      toast(`Exported ${data.tasks.length} tasks and ${data.projects.length} projects.`, {
+        tone: 'success',
+      });
+    } catch {
+      toast('Could not export data.', { tone: 'danger' });
+    }
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    // Reset the input so the same file can be re-selected.
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!file || !user) return;
+
+    setImporting(true);
+    try {
+      const text = await file.text();
+      const data = parseExportFile(text);
+      const result = await importUserData(user.id, data);
+
+      // If cloud is configured, trigger a sync pull to bring imported rows into local DB.
+      if (cloudConfigured) {
+        await sync({ userId: user.id, deviceId });
+      }
+
+      toast(
+        `Imported ${result.tasksCreated} tasks, ${result.projectsCreated} projects, ${result.subtasksCreated} checklist items.`,
+        { tone: 'success' },
+      );
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Could not import data.';
+      toast(message, { tone: 'danger' });
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -227,14 +281,41 @@ export default function SettingsPage() {
               )}
 
               <p className="text-meta text-ink-muted">
-                Your data lives in this browser&apos;s IndexedDB. Removing it cannot be undone and deletes
-                everything on this device, including queued changes that have not synced yet.
+                Your data lives in this browser&apos;s IndexedDB. Export regularly to keep a
+                backup. Removing local data cannot be undone and deletes everything on this
+                device, including queued changes that have not synced yet.
               </p>
 
-              <Button variant="danger" onClick={() => setRemoveDataOpen(true)} disabled={busy}>
-                <Trash2 aria-hidden="true" className="h-4 w-4" />
-                Remove local data
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => void handleExport()} disabled={busy || importing}>
+                  <Download aria-hidden="true" className="h-4 w-4" />
+                  Export data
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={busy || importing}
+                >
+                  <Upload aria-hidden="true" className="h-4 w-4" />
+                  {importing ? 'Importing…' : 'Import data'}
+                </Button>
+
+                <Button variant="danger" onClick={() => setRemoveDataOpen(true)} disabled={busy || importing}>
+                  <Trash2 aria-hidden="true" className="h-4 w-4" />
+                  Remove local data
+                </Button>
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="application/json,.json"
+                onChange={(event) => void handleImport(event)}
+                className="hidden"
+                aria-hidden="true"
+                tabIndex={-1}
+              />
             </div>
           </section>
 
