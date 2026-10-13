@@ -1,7 +1,9 @@
 'use client';
 
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useEffect, useRef, useState } from 'react';
 
+import { getSupabaseClient, isCloudConfigured } from '@/lib/supabase/client';
 import { sync } from '@/features/sync/engine';
 
 /**
@@ -89,10 +91,35 @@ export function useSyncTriggers(options: SyncTriggerOptions): void {
       if (document.visibilityState === 'visible') runSync('interval');
     }, intervalMs);
 
+    // Trigger 5: Supabase Realtime push. When another device pushes a change to the database,
+    // Supabase broadcasts a postgres_changes event over a websocket. This gives near-instant
+    // cross-device sync: Device B learns about Device A's edit in milliseconds, not on the next
+    // 5-minute interval. RLS policies ensure each user only receives events for their own rows,
+    // so no filter is needed on the subscription.
+    //
+    // The 2-second debounce on `runSync` collapses event bursts (a single edit can fire multiple
+    // events) into one sync run. The pull is idempotent — rows already at the current cursor are
+    // not refetched — so a self-triggered event (Device A receiving its own push echo) is a no-op.
+    const supabase = isCloudConfigured() ? getSupabaseClient() : null;
+    let channel: RealtimeChannel | null = null;
+    if (supabase) {
+      channel = supabase
+        .channel('sync-realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => runSync('realtime'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'task_subtasks' }, () => runSync('realtime'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => runSync('realtime'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tags' }, () => runSync('realtime'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'task_tags' }, () => runSync('realtime'))
+        .subscribe();
+    }
+
     return () => {
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.clearInterval(intervalId);
+      if (supabase && channel) {
+        void supabase.removeChannel(channel);
+      }
       // Abort on unmount or account change so a run cannot complete against a stale user id.
       controller.abort();
       if (abortRef.current === controller) abortRef.current = null;

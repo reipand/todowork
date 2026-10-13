@@ -1061,3 +1061,33 @@ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------------------------------
+-- Realtime publication
+--
+-- Adds the syncable tables to Supabase's realtime publication so that postgres_changes events
+-- are broadcast over websockets. This enables near-instant cross-device sync: when Device A
+-- pushes a change, Device B receives a websocket event and triggers a pull.
+--
+-- RLS policies apply to realtime events, so each authenticated user only receives events for
+-- their own rows. No additional filter is needed on the subscription.
+--
+-- Idempotent: uses a DO block with existence checks so re-running does not error on tables
+-- already in the publication.
+-- ---------------------------------------------------------------------------------------
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['tasks','projects','tags','task_subtasks','task_tags']
+  loop
+    if not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = t
+    ) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
+
