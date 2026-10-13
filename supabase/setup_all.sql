@@ -52,7 +52,7 @@ language plpgsql
 as $$
 begin
   new.updated_at := now();
-  new.revision := old.revision + 1;
+  new.revision := coalesce(old.revision, 0) + 1;
   return new;
 end;
 $$;
@@ -787,6 +787,17 @@ create policy sync_mutations_insert_own
   to authenticated
   with check ((select auth.uid()) = user_id);
 
+-- UPDATE is granted so the push path can store `result_revision` after a mutation is accepted.
+-- Without this, the ledger row is created with result_revision = NULL and duplicate detection
+-- on retry cannot echo the original revision back to the client.
+drop policy if exists sync_mutations_update_own on public.sync_mutations;
+create policy sync_mutations_update_own
+  on public.sync_mutations
+  for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
 -- ---------------------------------------------------------------------------------------
 -- sync_conflicts
 --
@@ -864,7 +875,7 @@ grant select, insert, update, delete on public.tags to authenticated;
 grant select, insert, update, delete on public.task_tags to authenticated;
 grant select, insert, update, delete on public.task_subtasks to authenticated;
 
-grant select, insert on public.sync_mutations to authenticated;
+grant select, insert, update on public.sync_mutations to authenticated;
 grant select, insert, update on public.sync_conflicts to authenticated;
 grant select, insert, update, delete on public.sync_devices to authenticated;
 
@@ -877,6 +888,8 @@ revoke all on public.tags from anon;
 revoke all on public.task_tags from anon;
 revoke all on public.task_subtasks from anon;
 revoke all on public.sync_mutations from anon;
+-- Note: authenticated retains UPDATE to store result_revision after acceptance.
+-- DELETE remains revoked; ledger rows are pruned only by the SECURITY DEFINER retention job.
 revoke all on public.sync_conflicts from anon;
 revoke all on public.sync_devices from anon;
 

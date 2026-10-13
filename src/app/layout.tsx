@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 
 import { AppProviders } from '@/components/layout/app-providers';
 import '@/styles/tokens.css';
@@ -114,6 +115,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
 
         <AppProviders>{children}</AppProviders>
+
+        <SpeedInsights />
       </body>
     </html>
   );
