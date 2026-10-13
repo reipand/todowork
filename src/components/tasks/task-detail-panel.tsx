@@ -1,0 +1,406 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { Trash2, X } from 'lucide-react';
+
+import { PriorityIndicator, PRIORITY_OPTIONS } from '@/components/ui/priority-indicator';
+import { ConfirmDialog } from '@/components/ui/dialog';
+import { deleteTask, updateTask, ValidationError } from '@/features/tasks/service';
+import { createSubtask, deleteSubtask, listSubtasks, updateSubtask } from '@/features/tasks/subtask-service';
+import { useToast } from '@/components/ui/toast';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { cn } from '@/lib/utils';
+import { formatFullDate, formatRelativeInstant } from '@/lib/utils/date';
+import type { Priority, TaskWithRelations } from '@/types/domain';
+
+/**
+ * Task detail panel.
+ *
+ * Edits are saved per field, immediately, with no Save button. The reason is that the local write is
+ * instant and offline-safe, so a save button would introduce a failure mode (unsaved work lost when
+ * the panel closes) to protect against a risk that does not exist here.
+ *
+ * Text fields debounce their write so typing does not queue one mutation per keystroke. Selects and the
+ * date input write on change, since each is a single deliberate act.
+ *
+ * Subtasks are managed inline, using midpoint ordering so a reorder is one write.
+ */
+
+export interface TaskDetailPanelProps {
+  task: TaskWithRelations;
+  userId: string;
+  projects: Array<{ id: string; name: string; color: string }>;
+  onClose: () => void;
+  onDeleted: () => void;
+}
+
+export function TaskDetailPanel({
+  task,
+  userId,
+  projects,
+  onClose,
+  onDeleted,
+}: TaskDetailPanelProps) {
+  const { toast } = useToast();
+
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description ?? '');
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
+  const [fieldError, setFieldError] = useState<string | null>(null);
+
+  // Reset local field state when the panel switches to a different task. Without this, editing task A
+  // and then opening task B would briefly show A's text in B's fields.
+  useEffect(() => {
+    setTitle(task.title);
+    setDescription(task.description ?? '');
+    setFieldError(null);
+  }, [task.id, task.title, task.description]);
+
+  const subtasks = useLiveQuery(
+    () => listSubtasks({ userId }, task.id),
+    [userId, task.id],
+    [],
+  );
+
+  /**
+   * Debounced title save.
+   *
+   * 500ms is chosen against the local write being instant: the delay exists only to collapse a typing
+   * burst into one queued mutation, not to protect the database.
+   */
+  useEffect(() => {
+    const trimmed = title.trim();
+    if (trimmed.length === 0 || trimmed === task.title) return;
+
+    const timer = setTimeout(() => {
+      void updateTask({ userId }, task.id, { title: trimmed }).catch((caught: unknown) => {
+        if (caught instanceof ValidationError) {
+          setFieldError(caught.fieldErrors.title ?? 'Check the title.');
+        } else {
+          toast('Could not save the title.', { tone: 'danger' });
+        }
+      });
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [title, task.title, task.id, userId, toast]);
+
+  useEffect(() => {
+    const trimmed = description.trim();
+    const nextDescription = trimmed.length === 0 ? null : description;
+    if (nextDescription === task.description) return;
+
+    const timer = setTimeout(() => {
+      void updateTask({ userId }, task.id, { description: nextDescription }).catch(() => {
+        toast('Could not save the notes.', { tone: 'danger' });
+      });
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [description, task.description, task.id, userId, toast]);
+
+  const applyPatch = (patch: Parameters<typeof updateTask>[2], failureMessage: string): void => {
+    void updateTask({ userId }, task.id, patch).catch((caught: unknown) => {
+      if (caught instanceof ValidationError) {
+        setFieldError(Object.values(caught.fieldErrors)[0] ?? 'Check the task details.');
+      } else {
+        toast(failureMessage, { tone: 'danger' });
+      }
+    });
+  };
+
+  const handleDelete = (): void => {
+    setConfirmDeleteOpen(false);
+    void deleteTask({ userId }, task.id)
+      .then(() => {
+        // A completed delete is confirmed with an undo-less toast. Undo is deliberately not offered:
+        // the tombstone would have to be reversed across devices, and a partial undo is worse than none.
+        toast('Task deleted.', { tone: 'success' });
+        onDeleted();
+      })
+      .catch(() => toast('Could not delete this task.', { tone: 'danger' }));
+  };
+
+  const handleAddSubtask = (): void => {
+    const trimmed = newSubtaskTitle.trim();
+    if (trimmed.length === 0) return;
+
+    void createSubtask({ userId }, { task_id: task.id, title: trimmed })
+      .then(() => setNewSubtaskTitle(''))
+      .catch(() => toast('Could not add the checklist item.', { tone: 'danger' }));
+  };
+
+  return (
+    <aside
+      // A complementary landmark: it holds detail about the list, not the list itself.
+      aria-label="Task details"
+      className="flex h-full flex-col border-l border-line bg-surface"
+    >
+      <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+        <h2 className="text-body font-semibold text-ink">Task details</h2>
+
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setConfirmDeleteOpen(true)}
+            aria-label="Delete task"
+            className="flex h-8 w-8 items-center justify-center rounded-control text-ink-muted transition-colors duration-hover hover:bg-danger-soft hover:text-danger"
+          >
+            <Trash2 aria-hidden="true" className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close task details"
+            className="flex h-8 w-8 items-center justify-center rounded-control text-ink-muted transition-colors duration-hover hover:bg-sunken hover:text-ink"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="flex flex-col gap-5">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-meta font-medium text-ink-secondary">Title</span>
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              maxLength={500}
+              aria-invalid={fieldError ? true : undefined}
+              className="h-9 rounded-control border border-line-strong bg-surface px-3 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+            />
+            {fieldError ? (
+              <span role="alert" className="text-meta font-medium text-danger">
+                {fieldError}
+              </span>
+            ) : null}
+          </label>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-meta font-medium text-ink-secondary">Notes</span>
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={4}
+              maxLength={10000}
+              placeholder="Add context, links or acceptance criteria"
+              className="resize-y rounded-control border border-line-strong bg-surface px-3 py-2 text-body text-ink placeholder:text-ink-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+            />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-meta font-medium text-ink-secondary">Due date</span>
+              <input
+                type="date"
+                value={task.due_date ?? ''}
+                onChange={(event) =>
+                  applyPatch({ due_date: event.target.value || null }, 'Could not save the due date.')
+                }
+                className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-meta font-medium text-ink-secondary">Start date</span>
+              <input
+                type="date"
+                value={task.start_date ?? ''}
+                onChange={(event) =>
+                  applyPatch({ start_date: event.target.value || null }, 'Could not save the start date.')
+                }
+                className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-meta font-medium text-ink-secondary">Priority</span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={task.priority}
+                  onChange={(event) =>
+                    applyPatch(
+                      { priority: event.target.value as Priority },
+                      'Could not save the priority.',
+                    )
+                  }
+                  className="h-9 flex-1 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+                >
+                  {PRIORITY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                {/* Shape reinforcement beside the control, so priority is legible without colour. */}
+                <PriorityIndicator priority={task.priority} variant="badge" />
+              </div>
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-meta font-medium text-ink-secondary">Project</span>
+              <select
+                value={task.project_id ?? ''}
+                onChange={(event) =>
+                  applyPatch(
+                    { project_id: event.target.value || null },
+                    'Could not save the project.',
+                  )
+                }
+                className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              >
+                <option value="">No project</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <section aria-labelledby="subtasks-heading" className="flex flex-col gap-2">
+            <h3 id="subtasks-heading" className="text-meta font-medium text-ink-secondary">
+              Checklist
+            </h3>
+
+            {subtasks.length === 0 ? (
+              <p className="text-meta text-ink-muted">
+                No checklist items yet. Break this task into steps if it helps.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {subtasks.map((subtask) => (
+                  <li key={subtask.id} className="flex items-center gap-2 rounded-control px-1 py-1 hover:bg-sunken/60">
+                    <input
+                      type="checkbox"
+                      checked={subtask.completed}
+                      onChange={(event) =>
+                        void updateSubtask({ userId }, subtask.id, {
+                          completed: event.target.checked,
+                        }).catch(() => toast('Could not update the checklist item.', { tone: 'danger' }))
+                      }
+                      aria-label={`Complete ${subtask.title}`}
+                      className="h-3.5 w-3.5 shrink-0 rounded border-line-strong text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    />
+
+                    <span
+                      className={cn(
+                        'min-w-0 flex-1 truncate text-body',
+                        subtask.completed ? 'text-ink-muted line-through' : 'text-ink',
+                      )}
+                    >
+                      {subtask.title}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void deleteSubtask({ userId }, subtask.id).catch(() =>
+                          toast('Could not remove the checklist item.', { tone: 'danger' }),
+                        )
+                      }
+                      aria-label={`Remove ${subtask.title}`}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-muted transition-colors duration-hover hover:bg-danger-soft hover:text-danger"
+                    >
+                      <X aria-hidden="true" className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex items-center gap-2">
+              <input
+                value={newSubtaskTitle}
+                onChange={(event) => setNewSubtaskTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    handleAddSubtask();
+                  }
+                }}
+                placeholder="Add a step"
+                aria-label="Add a checklist item"
+                maxLength={500}
+                className="h-8 min-w-0 flex-1 rounded-control border border-line-strong bg-surface px-2 text-body text-ink placeholder:text-ink-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              />
+              <button
+                type="button"
+                onClick={handleAddSubtask}
+                disabled={newSubtaskTitle.trim().length === 0}
+                className="h-8 shrink-0 rounded-control border border-line-strong bg-surface px-2.5 text-meta font-medium text-ink transition-colors duration-hover hover:bg-sunken disabled:opacity-45"
+              >
+                Add step
+              </button>
+            </div>
+          </section>
+
+          <dl className="flex flex-col gap-2 border-t border-line pt-4 text-meta">
+            <div className="flex justify-between gap-4">
+              <dt className="text-ink-muted">Created</dt>
+              <dd className="text-ink-secondary">{formatFullDate(task.created_at)}</dd>
+            </div>
+
+            {task.completed_at ? (
+              <div className="flex justify-between gap-4">
+                <dt className="text-ink-muted">Completed</dt>
+                <dd className="text-ink-secondary">{formatFullDate(task.completed_at)}</dd>
+              </div>
+            ) : null}
+
+            <div className="flex justify-between gap-4">
+              <dt className="text-ink-muted">Last changed</dt>
+              <dd className="text-ink-secondary">{formatRelativeInstant(task.updated_at)}</dd>
+            </div>
+
+            <div className="flex justify-between gap-4">
+              <dt className="text-ink-muted">Sync</dt>
+              <dd className="text-ink-secondary">
+                {task.sync_state === 'synced'
+                  ? 'Synced'
+                  : task.sync_state === 'pending'
+                    ? 'Waiting to sync'
+                    : 'Sync failed'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        onConfirm={handleDelete}
+        title="Delete this task?"
+        description={`"${task.title}" will be removed from this device and from your other devices when you are online. This cannot be undone.`}
+        confirmLabel="Delete task"
+        tone="danger"
+      />
+    </aside>
+  );
+}
+
+/**
+ * Live-subscribes to one task so the panel stays current when sync brings a change.
+ *
+ * Deliberately delegates to `getTask` rather than re-deriving the joins. An earlier version built
+ * the same project/tag/subtask shape inline, which is exactly how the panel and the list drift apart
+ * and start disagreeing about what a task contains.
+ */
+export function useTaskDetail(userId: string, taskId: string | null): TaskWithRelations | null {
+  const result = useLiveQuery(
+    async () => {
+      if (!taskId) return null;
+      const { getTask } = await import('@/features/tasks/service');
+      return getTask({ userId }, taskId);
+    },
+    [userId, taskId],
+    null,
+  );
+
+  return result ?? null;
+}

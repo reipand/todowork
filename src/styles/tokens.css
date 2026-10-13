@@ -1,0 +1,95 @@
+/*
+ * Todowork design tokens.
+ *
+ * Single source of colour truth for the whole product. Tailwind reads these through
+ * `rgb(var(--x) / <alpha-value>)`, so no component ever contains a hex literal and theming
+ * happens in exactly one place. See DESIGN.md for the reasoning behind each value.
+ *
+ * Values are stored as bare RGB channel triplets (not hex) so Tailwind's opacity modifier
+ * works: `bg-surface/50` compiles to `rgb(var(--surface) / 0.5)`.
+ */
+
+:root {
+  /* Neutral surfaces. Warm-shifted so large white areas read as paper under office light
+     and the build does not look like a default cold-grey admin theme. */
+  --paper: 251 250 248;
+  --surface: 255 255 255;
+  --surface-raised: 255 255 255;
+  --sunken: 245 244 241;
+
+  /* Core 1: ink. Warm near-black. */
+  --ink: 26 26 25;
+  --ink-secondary: 85 85 80;
+  --ink-muted: 122 122 115;
+
+  /* Hairlines. Borders first, shadow second (DESIGN.md). */
+  --line: 229 227 222;
+  --line-strong: 208 205 198;
+
+  /* The one accent. Used for focus, active nav, and the primary action only. */
+  --accent: 79 70 229;
+  --accent-hover: 67 56 202;
+  --accent-soft: 238 237 253;
+  --accent-fg: 255 255 255;
+
+  /* Semantic priority. Always paired with a glyph and a text label, never colour alone. */
+  --priority-high: 180 35 42;
+  --priority-high-soft: 253 240 240;
+  --priority-medium: 138 97 0;
+  --priority-medium-soft: 253 248 236;
+  --priority-low: 63 107 87;
+  --priority-low-soft: 240 248 244;
+
+  --danger: 180 35 42;
+  --danger-soft: 253 240 240;
+  --success: 47 106 74;
+  --success-soft: 240 248 243;
+  --warning: 138 97 0;
+  --warning-soft: 253 248 236;
+
+  /* Elevation. Only the detail panel and popovers are genuinely elevated. */
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px -8px rgb(0 0 0 / 0.12);
+  --shadow-popover: 0 1px 2px rgb(0 0 0 / 0.05), 0 6px 16px -6px rgb(0 0 0 / 0.14);
+
+  color-scheme: light;
+}
+
+.dark {
+  --paper: 20 20 19;
+  --surface: 26 26 25;
+  --surface-raised: 33 33 31;
+  --sunken: 15 15 14;
+
+  --ink: 237 237 235;
+  --ink-secondary: 168 168 162;
+  --ink-muted: 133 133 128;
+
+  --line: 48 48 45;
+  --line-strong: 66 66 62;
+
+  /* Accent is lightened in dark mode so it keeps AA contrast against the dark surface.
+     The light-mode indigo would fall below 4.5:1 on --surface here. */
+  --accent: 139 133 245;
+  --accent-hover: 163 158 248;
+  --accent-soft: 39 37 68;
+  --accent-fg: 20 20 19;
+
+  --priority-high: 240 138 142;
+  --priority-high-soft: 58 30 32;
+  --priority-medium: 217 169 62;
+  --priority-medium-soft: 55 46 24;
+  --priority-low: 127 184 156;
+  --priority-low-soft: 28 48 40;
+
+  --danger: 240 138 142;
+  --danger-soft: 58 30 32;
+  --success: 127 184 156;
+  --success-soft: 28 48 40;
+  --warning: 217 169 62;
+  --warning-soft: 55 46 24;
+
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -8px rgb(0 0 0 / 0.5);
+  --shadow-popover: 0 1px 2px rgb(0 0 0 / 0.35), 0 6px 16px -6px rgb(0 0 0 / 0.55);
+
+  color-scheme: dark;
+}
