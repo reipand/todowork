@@ -717,12 +717,12 @@ function asPayload(row: object): Record<string, unknown> {
 }
 
 /**
- * Creates a 'create' mutation for every live local row that does not already have a pending
- * mutation, then runs a full sync cycle.
+ * Creates a 'create' mutation for every live local row that is not yet synced and does not
+ * already have a pending mutation, then runs a full sync cycle.
  *
- * The upsert in `applyCreate` uses `onConflict: 'id'`, so a row that already exists on the
- * server is updated rather than duplicated. The `touch_revision` trigger increments the
- * revision on update, so other devices will pull the refreshed data.
+ * Rows with `sync_state === 'synced'` are skipped: they are already in Supabase and re-pushing
+ * would only bump the revision without adding data. The upsert in `applyCreate` uses
+ * `onConflict: 'id'` as a second defence, so a replay would update rather than duplicate.
  */
 export async function forcePushAll(
   userId: string,
@@ -736,8 +736,10 @@ export async function forcePushAll(
 
   // Phase 1: Projects and tags have no FK dependencies — push them first so tasks can reference
   // projects and task_tags can reference tags.
+  // Skip rows already synced to Supabase to avoid duplicates and unnecessary revision bumps.
   const projects = await liveRowsFor(db.projects, userId);
   for (const project of projects) {
+    if (project.sync_state === 'synced') continue;
     if (await hasPendingMutationFor(project.id)) continue;
     await db.mutations.put(
       buildMutation(userId, {
@@ -753,6 +755,7 @@ export async function forcePushAll(
 
   const tags = await liveRowsFor(db.tags, userId);
   for (const tag of tags) {
+    if (tag.sync_state === 'synced') continue;
     if (await hasPendingMutationFor(tag.id)) continue;
     await db.mutations.put(
       buildMutation(userId, {
@@ -777,6 +780,7 @@ export async function forcePushAll(
   let phase2 = 0;
   const tasks = await liveRowsFor(db.tasks, userId);
   for (const task of tasks) {
+    if (task.sync_state === 'synced') continue;
     if (await hasPendingMutationFor(task.id)) continue;
     await db.mutations.put(
       buildMutation(userId, {
@@ -801,6 +805,7 @@ export async function forcePushAll(
   let phase3 = 0;
   const subtasks = await liveRowsFor(db.subtasks, userId);
   for (const subtask of subtasks) {
+    if (subtask.sync_state === 'synced') continue;
     if (await hasPendingMutationFor(subtask.id)) continue;
     await db.mutations.put(
       buildMutation(userId, {
@@ -817,6 +822,7 @@ export async function forcePushAll(
   const taskTagRows = await db.taskTags.where('user_id').equals(userId).toArray();
   const liveTaskTags = decodeRowsFromStorage(taskTagRows);
   for (const tt of liveTaskTags) {
+    if (tt.sync_state === 'synced') continue;
     if (await hasPendingMutationFor(tt.id)) continue;
     await db.mutations.put(
       buildMutation(userId, {
