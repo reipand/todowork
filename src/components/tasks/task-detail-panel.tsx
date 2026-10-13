@@ -64,6 +64,7 @@ export function TaskDetailPanel({
   const [editingSubtask, setEditingSubtask] = useState<string | null>(null);
   const [subtaskEditTitle, setSubtaskEditTitle] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
+  const addInputRef = useRef<HTMLInputElement>(null);
 
   // Reset local field state when the panel switches to a different task. Without this, editing task A
   // and then opening task B would briefly show A's text in B's fields.
@@ -227,6 +228,30 @@ export function TaskDetailPanel({
       );
     }
     setEditingSubtask(null);
+  };
+
+  /**
+   * Notion-style: Enter in inline edit saves the current item and focuses the "Add a step"
+   * input so the user can immediately type the next one.
+   */
+  const saveSubtaskEditAndContinue = (): void => {
+    saveSubtaskEdit();
+    requestAnimationFrame(() => addInputRef.current?.focus());
+  };
+
+  /**
+   * Notion-style: Backspace on an empty inline-edit deletes the subtask and focuses the
+   * "Add a step" input.
+   */
+  const deleteSubtaskOnEmptyBackspace = (): void => {
+    if (!editingSubtask) return;
+    if (subtaskEditTitle.trim().length === 0) {
+      void deleteSubtask({ userId }, editingSubtask).catch(() =>
+        toast('Could not remove the checklist item.', { tone: 'danger' }),
+      );
+      setEditingSubtask(null);
+      requestAnimationFrame(() => addInputRef.current?.focus());
+    }
   };
 
   // --- Calendar export ---------------------------------------------------------
@@ -472,9 +497,12 @@ export function TaskDetailPanel({
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') {
                             event.preventDefault();
-                            saveSubtaskEdit();
+                            saveSubtaskEditAndContinue();
                           } else if (event.key === 'Escape') {
                             setEditingSubtask(null);
+                          } else if (event.key === 'Backspace' && subtaskEditTitle.length === 0) {
+                            event.preventDefault();
+                            deleteSubtaskOnEmptyBackspace();
                           }
                         }}
                         onBlur={saveSubtaskEdit}
@@ -513,6 +541,7 @@ export function TaskDetailPanel({
 
             <div className="flex items-center gap-2">
               <input
+                ref={addInputRef}
                 value={newSubtaskTitle}
                 onChange={(event) => setNewSubtaskTitle(event.target.value)}
                 onKeyDown={(event) => {

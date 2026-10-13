@@ -1,4 +1,4 @@
-import { getDatabase, liveRowsFor } from '@/lib/db/schema';
+import { decodeRowsFromStorage, getDatabase, liveRowsFor } from '@/lib/db/schema';
 import { computeProjectProgress } from '@/features/projects/service';
 import type { TaskServiceContext } from '@/features/tasks/service';
 import {
@@ -195,13 +195,16 @@ export async function tasksByDueDate(
 ): Promise<Map<string, Array<{ id: string; title: string; completed: boolean; priority: string; color: string | null }>>> {
   const db = getDatabase();
 
-  const [tasks, projects] = await Promise.all([
+  const [rawTasks, projects] = await Promise.all([
     db.tasks
       .where('[user_id+due_date]')
       .between([ctx.userId, rangeStart], [ctx.userId, rangeEnd], true, true)
       .toArray(),
     liveRowsFor(db.projects, ctx.userId),
   ]);
+
+  // Decode stored rows so live `deleted_at` is null, not ''.
+  const tasks = decodeRowsFromStorage(rawTasks);
 
   const projectColorById = new Map(projects.map((project) => [project.id, project.color]));
   const buckets = new Map<

@@ -1,5 +1,6 @@
 import {
   allChildRows,
+  decodeRowFromStorage,
   getDatabase,
   liveChildRows,
   type LocalSubtask,
@@ -44,7 +45,9 @@ export async function createSubtask(
 
   // The parent task must exist and belong to this account. Without this check a stale id from a
   // previous account could attach a checklist item to a task the user can no longer see.
-  const parent = await db.tasks.get(data.task_id);
+  // The row is decoded because IndexedDB stores live `deleted_at` as '' not null.
+  const rawParent = await db.tasks.get(data.task_id);
+  const parent = rawParent ? decodeRowFromStorage(rawParent) : null;
   if (!parent || parent.user_id !== ctx.userId || parent.deleted_at !== null) {
     throw new ValidationError({ _form: 'This task no longer exists.' });
   }
