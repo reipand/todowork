@@ -1,8 +1,8 @@
-// Todowork service worker — v1
+// Todowork service worker — v2
 // Network-first for navigation (always latest HTML), stale-while-revalidate for assets.
 // Auto-activates on install and on SKIP_WAITING message so deployed updates apply instantly.
 
-const CACHE = 'todowork-v1';
+const CACHE = 'todowork-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -29,8 +29,12 @@ self.addEventListener('fetch', (event) => {
   // Only handle GET.
   if (request.method !== 'GET') return;
 
-  // Skip Supabase API requests — always go to network.
+  // Only handle http/https. chrome-extension://, moz-extension://, etc. are not cacheable
+  // and trying to put them in the Cache API throws: "Request scheme 'chrome-extension' is unsupported."
   const url = new URL(request.url);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+
+  // Skip Supabase API requests — always go to network.
   if (url.hostname.endsWith('.supabase.co')) return;
 
   // Network-first for navigation: always fetch the latest HTML so new deployments
