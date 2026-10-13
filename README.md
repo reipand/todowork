@@ -181,14 +181,9 @@ server {
 }
 ```
 
-### Mobile (Capacitor, planned)
+### Mobile (Capacitor)
 
-```bash
-npx cap init Todowork com.todowork.app
-npx cap add android
-npx cap add ios
-npx cap copy
-```
+Lihat [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) untuk panduan lengkap update web, Android, dan iOS.
 
 ## License
 
