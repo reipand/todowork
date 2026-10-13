@@ -12,9 +12,9 @@ import {
 } from 'react';
 
 import { isCloudConfigured } from '@/lib/supabase/client';
-import { GUEST_USER_ID, getDatabase } from '@/lib/db/schema';
+import { GUEST_USER_ID, getDatabase, migrateGuestData } from '@/lib/db/schema';
 import { onAuthStateChange, readLocalSession, signOut } from '@/features/auth/service';
-import { resetSyncState } from '@/features/sync/engine';
+import { resetSyncState, sync } from '@/features/sync/engine';
 import { useSyncTriggers } from '@/hooks/use-sync-triggers';
 import { newId } from '@/lib/utils';
 
@@ -170,6 +170,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const previousUserId = previousUserIdRef.current;
 
     if (previousUserId !== null && previousUserId !== currentUserId) {
+      // When transitioning from guest to authenticated, migrate all local guest data
+      // to the auth user's id. Without this, rows created in guest mode keep
+      // user_id = 'guest-local' and the RLS INSERT policy on tasks rejects the upsert
+      // because the referenced project does not belong to auth.uid().
+      if (previousUserId === GUEST_USER_ID && currentUserId !== null && currentUserId !== GUEST_USER_ID) {
+        void migrateGuestData(currentUserId).then(({ migrated, total }) => {
+          if (migrated) {
+            console.warn(`Migrated ${total} guest rows to authenticated user.`);
+            // Push the migrated mutations to Supabase immediately.
+            void sync({ userId: currentUserId, deviceId: deviceIdRef.current });
+          }
+        });
+      }
+
       // Clear the outgoing account's cursor so the incoming account is not made to skip rows.
       void resetSyncState(previousUserId);
     }

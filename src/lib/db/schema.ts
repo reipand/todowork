@@ -150,6 +150,53 @@ export function syncMetaKey(userId: string | null): string {
   return `sync-meta:${userId ?? GUEST_USER_ID}`;
 }
 
+/**
+ * Migrates all local rows from `GUEST_USER_ID` to a real auth user id.
+ *
+ * This runs once when a user who created data in guest mode signs in. Without it, those rows keep
+ * `user_id = 'guest-local'` forever: the sync engine never picks them up (it queries by the auth
+ * user id), and even if it did, the RLS INSERT policy on `tasks` checks that the referenced
+ * project belongs to `auth.uid()` — a project created in guest mode has the wrong user_id, so
+ * the policy denies the upsert with 403.
+ *
+ * The migration is a single Dexie transaction across every user-scoped table. `syncMeta` is
+ * excluded: the guest cursor is cleared separately by `resetSyncState` in the session context.
+ */
+export async function migrateGuestData(newUserId: string): Promise<{
+  migrated: boolean;
+  total: number;
+}> {
+  const db = getDatabase();
+
+  // All Dexie tables that carry a user_id column and need migration.
+  const tableNames = [
+    'tasks',
+    'projects',
+    'tags',
+    'subtasks',
+    'taskTags',
+    'mutations',
+    'conflicts',
+  ] as const;
+
+  let total = 0;
+
+  await db.transaction('rw', tableNames, async () => {
+    for (const name of tableNames) {
+      // db.table(name) returns a loosely-typed Table, avoiding the union-type
+      // incompatibility across the strongly-typed table properties on the class.
+      const table = db.table(name);
+      const rows = await table.where('user_id').equals(GUEST_USER_ID).toArray();
+      if (rows.length > 0) {
+        await table.bulkPut(rows.map((row: Record<string, unknown>) => ({ ...row, user_id: newUserId })));
+      }
+      total += rows.length;
+    }
+  });
+
+  return { migrated: total > 0, total };
+}
+
 /* ---------------------------------------------------------------------------------------
  * Live-row query helpers
  * ------------------------------------------------------------------------------------- */
