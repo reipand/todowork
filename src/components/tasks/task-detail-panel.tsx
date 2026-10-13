@@ -1,16 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CalendarPlus, ExternalLink, GripVertical, Trash2, X } from 'lucide-react';
 
 import { PriorityIndicator, PRIORITY_OPTIONS } from '@/components/ui/priority-indicator';
 import { ConfirmDialog } from '@/components/ui/dialog';
 import { deleteTask, updateTask, ValidationError } from '@/features/tasks/service';
-import { createSubtask, deleteSubtask, listSubtasks, updateSubtask } from '@/features/tasks/subtask-service';
+import {
+  createSubtask,
+  deleteSubtask,
+  listSubtasks,
+  reorderSubtask,
+  updateSubtask,
+} from '@/features/tasks/subtask-service';
 import { useToast } from '@/components/ui/toast';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { cn } from '@/lib/utils';
-import { formatFullDate, formatRelativeInstant } from '@/lib/utils/date';
+import { formatFullDate, formatRelativeInstant, isoToLocalDateTimeInput, localDateTimeToIso } from '@/lib/utils/date';
+import { downloadICS, generateICS, googleCalendarUrl, hasCalendarEvent } from '@/lib/utils/calendar';
 import type { Priority, TaskWithRelations } from '@/types/domain';
 
 /**
@@ -48,6 +55,15 @@ export function TaskDetailPanel({
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
+
+  // Drag-to-reorder state. Uses native HTML5 DnD; no library needed for a flat list.
+  const [draggedSubtask, setDraggedSubtask] = useState<string | null>(null);
+  const [dragOverSubtask, setDragOverSubtask] = useState<string | null>(null);
+
+  // Inline subtask title edit state.
+  const [editingSubtask, setEditingSubtask] = useState<string | null>(null);
+  const [subtaskEditTitle, setSubtaskEditTitle] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   // Reset local field state when the panel switches to a different task. Without this, editing task A
   // and then opening task B would briefly show A's text in B's fields.
@@ -130,6 +146,94 @@ export function TaskDetailPanel({
       .then(() => setNewSubtaskTitle(''))
       .catch(() => toast('Could not add the checklist item.', { tone: 'danger' }));
   };
+
+  // --- Drag-to-reorder ---------------------------------------------------------
+  // Native HTML5 DnD on a flat list. On drop, we compute the before/after neighbours
+  // of the target slot and delegate to reorderSubtask, which writes a single midpoint
+  // position. The service handles precision exhaustion internally.
+
+  const handleDragStart = (event: React.DragEvent<HTMLLIElement>, subtaskId: string): void => {
+    setDraggedSubtask(subtaskId);
+    event.dataTransfer.effectAllowed = 'move';
+    // Firefox requires setData to start a drag; the data itself is unused.
+    event.dataTransfer.setData('text/plain', subtaskId);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLLIElement>, subtaskId: string): void => {
+    if (draggedSubtask === null || draggedSubtask === subtaskId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDragOverSubtask(subtaskId);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLLIElement>, targetId: string): void => {
+    event.preventDefault();
+    if (!draggedSubtask || draggedSubtask === targetId) {
+      setDraggedSubtask(null);
+      setDragOverSubtask(null);
+      return;
+    }
+
+    const draggedIndex = subtasks.findIndex((s) => s.id === draggedSubtask);
+    const targetIndex = subtasks.findIndex((s) => s.id === targetId);
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedSubtask(null);
+      setDragOverSubtask(null);
+      return;
+    }
+
+    // Compute the neighbours of the insertion slot.
+    let beforeId: string | null;
+    let afterId: string | null;
+
+    if (draggedIndex < targetIndex) {
+      // Moving down: insert after the target.
+      beforeId = targetId;
+      afterId = subtasks[targetIndex + 1]?.id ?? null;
+    } else {
+      // Moving up: insert before the target.
+      afterId = targetId;
+      beforeId = subtasks[targetIndex - 1]?.id ?? null;
+    }
+
+    void reorderSubtask({ userId }, task.id, draggedSubtask, beforeId, afterId).catch(() =>
+      toast('Could not reorder the checklist.', { tone: 'danger' }),
+    );
+
+    setDraggedSubtask(null);
+    setDragOverSubtask(null);
+  };
+
+  const handleDragEnd = (): void => {
+    setDraggedSubtask(null);
+    setDragOverSubtask(null);
+  };
+
+  // --- Inline subtask title edit ----------------------------------------------
+
+  const startSubtaskEdit = (subtaskId: string, currentTitle: string): void => {
+    setEditingSubtask(subtaskId);
+    setSubtaskEditTitle(currentTitle);
+    // Focus the input on next paint.
+    requestAnimationFrame(() => editInputRef.current?.focus());
+  };
+
+  const saveSubtaskEdit = (): void => {
+    if (!editingSubtask) return;
+    const trimmed = subtaskEditTitle.trim();
+    if (trimmed.length > 0) {
+      void updateSubtask({ userId }, editingSubtask, { title: trimmed }).catch(() =>
+        toast('Could not save the checklist item.', { tone: 'danger' }),
+      );
+    }
+    setEditingSubtask(null);
+  };
+
+  // --- Calendar export ---------------------------------------------------------
+
+  const icsContent = generateICS(task);
+  const googleUrl = googleCalendarUrl(task);
+  const completedSubtaskCount = subtasks.filter((s) => s.completed).length;
 
   return (
     <aside
@@ -262,10 +366,66 @@ export function TaskDetailPanel({
             </label>
           </div>
 
+          <label className="flex flex-col gap-1.5">
+            <span className="text-meta font-medium text-ink-secondary">Reminder</span>
+            <input
+              type="datetime-local"
+              value={task.reminder_at ? isoToLocalDateTimeInput(task.reminder_at) : ''}
+              onChange={(event) =>
+                applyPatch(
+                  { reminder_at: event.target.value ? localDateTimeToIso(event.target.value) : null },
+                  'Could not save the reminder.',
+                )
+              }
+              className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+            />
+          </label>
+
+          {hasCalendarEvent(task) ? (
+            <section aria-labelledby="calendar-heading" className="flex flex-col gap-2">
+              <h3 id="calendar-heading" className="text-meta font-medium text-ink-secondary">
+                Add to calendar
+              </h3>
+              <div className="flex gap-2">
+                {icsContent ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const slug = task.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'task';
+                      downloadICS(icsContent, `${slug}.ics`);
+                    }}
+                    className="flex h-8 items-center gap-1.5 rounded-control border border-line-strong bg-surface px-2.5 text-meta font-medium text-ink transition-colors duration-hover hover:bg-sunken"
+                  >
+                    <CalendarPlus aria-hidden="true" className="h-3.5 w-3.5" />
+                    Download .ics
+                  </button>
+                ) : null}
+                {googleUrl ? (
+                  <a
+                    href={googleUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex h-8 items-center gap-1.5 rounded-control border border-line-strong bg-surface px-2.5 text-meta font-medium text-ink transition-colors duration-hover hover:bg-sunken"
+                  >
+                    <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+                    Google Calendar
+                  </a>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
           <section aria-labelledby="subtasks-heading" className="flex flex-col gap-2">
-            <h3 id="subtasks-heading" className="text-meta font-medium text-ink-secondary">
-              Checklist
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 id="subtasks-heading" className="text-meta font-medium text-ink-secondary">
+                Checklist
+              </h3>
+              {subtasks.length > 0 ? (
+                <span className="text-meta text-ink-muted tabular">
+                  {completedSubtaskCount} of {subtasks.length} completed
+                </span>
+              ) : null}
+            </div>
 
             {subtasks.length === 0 ? (
               <p className="text-meta text-ink-muted">
@@ -274,7 +434,24 @@ export function TaskDetailPanel({
             ) : (
               <ul className="flex flex-col gap-1">
                 {subtasks.map((subtask) => (
-                  <li key={subtask.id} className="flex items-center gap-2 rounded-control px-1 py-1 hover:bg-sunken/60">
+                  <li
+                    key={subtask.id}
+                    draggable={editingSubtask !== subtask.id}
+                    onDragStart={(event) => handleDragStart(event, subtask.id)}
+                    onDragOver={(event) => handleDragOver(event, subtask.id)}
+                    onDrop={(event) => handleDrop(event, subtask.id)}
+                    onDragEnd={handleDragEnd}
+                    className={cn(
+                      'flex items-center gap-2 rounded-control px-1 py-1 hover:bg-sunken/60',
+                      draggedSubtask === subtask.id && 'opacity-40',
+                      dragOverSubtask === subtask.id && 'border-t-2 border-accent',
+                    )}
+                  >
+                    <GripVertical
+                      aria-hidden="true"
+                      className="h-3.5 w-3.5 shrink-0 cursor-grab text-ink-muted/40"
+                    />
+
                     <input
                       type="checkbox"
                       checked={subtask.completed}
@@ -287,14 +464,35 @@ export function TaskDetailPanel({
                       className="h-3.5 w-3.5 shrink-0 rounded border-line-strong text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     />
 
-                    <span
-                      className={cn(
-                        'min-w-0 flex-1 truncate text-body',
-                        subtask.completed ? 'text-ink-muted line-through' : 'text-ink',
-                      )}
-                    >
-                      {subtask.title}
-                    </span>
+                    {editingSubtask === subtask.id ? (
+                      <input
+                        ref={editInputRef}
+                        value={subtaskEditTitle}
+                        onChange={(event) => setSubtaskEditTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            saveSubtaskEdit();
+                          } else if (event.key === 'Escape') {
+                            setEditingSubtask(null);
+                          }
+                        }}
+                        onBlur={saveSubtaskEdit}
+                        maxLength={500}
+                        className="min-w-0 flex-1 rounded-control border border-accent bg-surface px-1.5 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+                      />
+                    ) : (
+                      <span
+                        onDoubleClick={() => startSubtaskEdit(subtask.id, subtask.title)}
+                        title="Double-click to edit"
+                        className={cn(
+                          'min-w-0 flex-1 truncate text-body',
+                          subtask.completed ? 'text-ink-muted line-through' : 'text-ink',
+                        )}
+                      >
+                        {subtask.title}
+                      </span>
+                    )}
 
                     <button
                       type="button"

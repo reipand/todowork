@@ -54,9 +54,15 @@ const envSchema = z.object({
 export type Env = z.infer<typeof envSchema>;
 
 function readEnv(): Env {
+  // Supabase renamed "anon key" to "publishable key" — same value, different env var name.
+  // Accept either so the Supabase wizard's output works without manual renaming.
+  const anonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
   const parsed = envSchema.safeParse({
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: anonKey,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
     NEXT_PUBLIC_ENABLE_PWA_INSTALL_PROMPT: process.env.NEXT_PUBLIC_ENABLE_PWA_INSTALL_PROMPT,
     NEXT_PUBLIC_CONFLICT_RETENTION_DAYS: process.env.NEXT_PUBLIC_CONFLICT_RETENTION_DAYS,

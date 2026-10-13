@@ -40,3 +40,6 @@ Thumbs.db
 android/
 ios/
 node_modules
+
+.vercel
+.env*
