@@ -14,7 +14,7 @@ import {
 import { isCloudConfigured } from '@/lib/supabase/client';
 import { GUEST_USER_ID, getDatabase, migrateGuestData } from '@/lib/db/schema';
 import { onAuthStateChange, readLocalSession, signOut } from '@/features/auth/service';
-import { resetSyncState, sync } from '@/features/sync/engine';
+import { resetSyncState, retryFailedMutations, sync } from '@/features/sync/engine';
 import { useSyncTriggers } from '@/hooks/use-sync-triggers';
 import { newId } from '@/lib/utils';
 
@@ -113,6 +113,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const deviceIdRef = useRef<string>('');
   const previousUserIdRef = useRef<string | null>(null);
+  const autoRetriedRef = useRef<Set<string>>(new Set());
 
   // Initialised lazily on the client, because neither `localStorage` nor `navigator` exists during a
   // static export's build pass.
@@ -189,6 +190,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     previousUserIdRef.current = currentUserId;
+
+    // Auto-retry failed mutations once per authenticated session.
+    // Picks up mutations that failed before the user_id injection fix was deployed —
+    // they are in 'failed' status and drainQueue only processes 'pending'.
+    if (
+      currentUserId &&
+      currentUserId !== GUEST_USER_ID &&
+      !autoRetriedRef.current.has(currentUserId)
+    ) {
+      autoRetriedRef.current.add(currentUserId);
+      void retryFailedMutations(currentUserId).then((count) => {
+        if (count > 0) {
+          void sync({ userId: currentUserId, deviceId: deviceIdRef.current });
+        }
+      });
+    }
   }, [user?.id]);
 
   // Subscribe to auth events so an expired or revoked session is noticed without a page reload.

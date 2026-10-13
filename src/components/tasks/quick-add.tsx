@@ -8,6 +8,7 @@ import { createTask, ValidationError } from '@/features/tasks/service';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { todayCalendarDate } from '@/lib/utils/date';
+import { parseQuickAdd } from '@/lib/utils/nl-parse';
 import type { Priority } from '@/types/domain';
 
 /**
@@ -59,6 +60,13 @@ export function QuickAdd({
     inputRef.current?.focus();
   }, [autoFocus]);
 
+  // Listen for the global "focus quick add" event, dispatched by the N keyboard shortcut.
+  useEffect(() => {
+    const handler = (): void => inputRef.current?.focus();
+    window.addEventListener('todowork:focus-quick-add', handler);
+    return () => window.removeEventListener('todowork:focus-quick-add', handler);
+  }, []);
+
   const [title, setTitle] = useState('');
   const [expanded, setExpanded] = useState(false);
   const [priority, setPriority] = useState<Priority>('medium');
@@ -89,14 +97,19 @@ export function QuickAdd({
     setError(null);
 
     try {
+      // Parse natural-language date and priority from the title.
+      // "Meeting tomorrow #high" → title="Meeting", due_date=tomorrow, priority="high".
+      // Parsed values override form defaults; explicit form values are the fallback.
+      const parsed = parseQuickAdd(trimmed);
+
       await createTask(
         { userId },
         {
-          title: trimmed,
+          title: parsed.title || trimmed,
           description: null,
           project_id: projectId,
-          priority,
-          due_date: dueDate,
+          priority: parsed.priority ?? priority,
+          due_date: parsed.due_date ?? dueDate,
           start_date: null,
           reminder_at: null,
           tag_ids: [],

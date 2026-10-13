@@ -8,6 +8,7 @@ import { TopBar, MobileSyncRow } from '@/components/layout/top-bar';
 import { MobileBottomNav, MobileNavDrawer } from '@/components/layout/mobile-nav';
 import { useDatabaseReady, useSession } from '@/features/auth/session-context';
 import { StatsSkeleton } from '@/components/ui/states';
+import { ShortcutsHelpDialog, useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
 
 /**
  * Dashboard shell.
@@ -35,6 +36,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const { showHelp: showShortcutsHelp, setShowHelp: setShowShortcutsHelp } = useKeyboardShortcuts();
 
   // Cmd+K / Ctrl+K toggles the command palette. Registered on window so it works regardless of
   // focus location — the user can be in the sidebar, the task list, or the detail panel.
@@ -114,6 +116,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
       <MobileBottomNav />
 
       <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
+      <ShortcutsHelpDialog open={showShortcutsHelp} onClose={() => setShowShortcutsHelp(false)} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CalendarPlus, ExternalLink, GripVertical, Trash2, X } from 'lucide-react';
+import { Bell, Calendar, CalendarDays, CalendarPlus, ExternalLink, Flag, FolderKanban, GripVertical, Trash2, X, type LucideIcon } from 'lucide-react';
 
 import { PriorityIndicator, PRIORITY_OPTIONS } from '@/components/ui/priority-indicator';
 import { ConfirmDialog } from '@/components/ui/dialog';
@@ -291,62 +291,47 @@ export function TaskDetailPanel({
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
-        <div className="flex flex-col gap-5">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-meta font-medium text-ink-secondary">Title</span>
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              maxLength={500}
-              aria-invalid={fieldError ? true : undefined}
-              className="h-9 rounded-control border border-line-strong bg-surface px-3 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
-            />
-            {fieldError ? (
-              <span role="alert" className="text-meta font-medium text-danger">
-                {fieldError}
-              </span>
-            ) : null}
-          </label>
+        <div className="flex flex-col gap-4">
+          {/* Title — large, no label. Like a Notion page title. */}
+          <input
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            maxLength={500}
+            aria-invalid={fieldError ? true : undefined}
+            aria-label="Task title"
+            placeholder="Untitled"
+            className="text-title font-semibold text-ink bg-transparent focus:outline-none"
+          />
+          {fieldError ? (
+            <span role="alert" className="text-meta font-medium text-danger">
+              {fieldError}
+            </span>
+          ) : null}
 
-          <label className="flex flex-col gap-1.5">
-            <span className="text-meta font-medium text-ink-secondary">Notes</span>
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              rows={4}
-              maxLength={10000}
-              placeholder="Add context, links or acceptance criteria"
-              className="resize-y rounded-control border border-line-strong bg-surface px-3 py-2 text-body text-ink placeholder:text-ink-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
-            />
-          </label>
-
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-meta font-medium text-ink-secondary">Due date</span>
-              <input
-                type="date"
-                value={task.due_date ?? ''}
+          {/* Property rows — Notion-style key:value pairs with icon + label + value. */}
+          <div className="flex flex-col gap-0.5">
+            <PropertyRow icon={FolderKanban} label="Project">
+              <select
+                value={task.project_id ?? ''}
                 onChange={(event) =>
-                  applyPatch({ due_date: event.target.value || null }, 'Could not save the due date.')
+                  applyPatch(
+                    { project_id: event.target.value || null },
+                    'Could not save the project.',
+                  )
                 }
-                className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
-              />
-            </label>
+                aria-label="Project"
+                className="h-8 min-w-0 flex-1 rounded-control bg-transparent px-1 text-body text-ink transition-colors duration-hover hover:bg-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              >
+                <option value="">No project</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </PropertyRow>
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-meta font-medium text-ink-secondary">Start date</span>
-              <input
-                type="date"
-                value={task.start_date ?? ''}
-                onChange={(event) =>
-                  applyPatch({ start_date: event.target.value || null }, 'Could not save the start date.')
-                }
-                className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1.5">
-              <span className="text-meta font-medium text-ink-secondary">Priority</span>
+            <PropertyRow icon={Flag} label="Priority">
               <div className="flex items-center gap-2">
                 <select
                   value={task.priority}
@@ -356,7 +341,8 @@ export function TaskDetailPanel({
                       'Could not save the priority.',
                     )
                   }
-                  className="h-9 flex-1 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+                  aria-label="Priority"
+                  className="h-8 min-w-0 flex-1 rounded-control bg-transparent px-1 text-body text-ink transition-colors duration-hover hover:bg-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
                 >
                   {PRIORITY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -364,47 +350,60 @@ export function TaskDetailPanel({
                     </option>
                   ))}
                 </select>
-                {/* Shape reinforcement beside the control, so priority is legible without colour. */}
                 <PriorityIndicator priority={task.priority} variant="badge" />
               </div>
-            </label>
+            </PropertyRow>
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-meta font-medium text-ink-secondary">Project</span>
-              <select
-                value={task.project_id ?? ''}
+            <PropertyRow icon={Calendar} label="Due">
+              <input
+                type="date"
+                value={task.due_date ?? ''}
+                onChange={(event) =>
+                  applyPatch({ due_date: event.target.value || null }, 'Could not save the due date.')
+                }
+                aria-label="Due date"
+                className="h-8 min-w-0 flex-1 rounded-control bg-transparent px-1 text-body text-ink transition-colors duration-hover hover:bg-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              />
+            </PropertyRow>
+
+            <PropertyRow icon={CalendarDays} label="Start">
+              <input
+                type="date"
+                value={task.start_date ?? ''}
+                onChange={(event) =>
+                  applyPatch({ start_date: event.target.value || null }, 'Could not save the start date.')
+                }
+                aria-label="Start date"
+                className="h-8 min-w-0 flex-1 rounded-control bg-transparent px-1 text-body text-ink transition-colors duration-hover hover:bg-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              />
+            </PropertyRow>
+
+            <PropertyRow icon={Bell} label="Reminder">
+              <input
+                type="datetime-local"
+                value={task.reminder_at ? isoToLocalDateTimeInput(task.reminder_at) : ''}
                 onChange={(event) =>
                   applyPatch(
-                    { project_id: event.target.value || null },
-                    'Could not save the project.',
+                    { reminder_at: event.target.value ? localDateTimeToIso(event.target.value) : null },
+                    'Could not save the reminder.',
                   )
                 }
-                className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
-              >
-                <option value="">No project</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                aria-label="Reminder"
+                className="h-8 min-w-0 flex-1 rounded-control bg-transparent px-1 text-body text-ink transition-colors duration-hover hover:bg-sunken focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+              />
+            </PropertyRow>
           </div>
 
-          <label className="flex flex-col gap-1.5">
-            <span className="text-meta font-medium text-ink-secondary">Reminder</span>
-            <input
-              type="datetime-local"
-              value={task.reminder_at ? isoToLocalDateTimeInput(task.reminder_at) : ''}
-              onChange={(event) =>
-                applyPatch(
-                  { reminder_at: event.target.value ? localDateTimeToIso(event.target.value) : null },
-                  'Could not save the reminder.',
-                )
-              }
-              className="h-9 rounded-control border border-line-strong bg-surface px-2 text-body text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
-            />
-          </label>
+          {/* Description — Notion-style page body below properties. */}
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={4}
+            maxLength={10000}
+            placeholder="Add a description…"
+            aria-label="Description"
+            className="resize-y rounded-control border border-line bg-surface px-3 py-2 text-body text-ink placeholder:text-ink-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+          />
 
           {hasCalendarEvent(task) ? (
             <section aria-labelledby="calendar-heading" className="flex flex-col gap-2">
@@ -608,6 +607,28 @@ export function TaskDetailPanel({
         tone="danger"
       />
     </aside>
+  );
+}
+
+/**
+ * A Notion-style property row: icon + label + value, arranged horizontally.
+ * The value (a select, input, or custom control) fills the remaining width.
+ */
+function PropertyRow({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: LucideIcon;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2 py-0.5">
+      <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-ink-muted" />
+      <span className="w-16 shrink-0 text-meta text-ink-muted">{label}</span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
   );
 }
 

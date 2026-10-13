@@ -1,7 +1,7 @@
 'use client';
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { PageContent, PageHeader } from '@/components/layout/page-header';
 import { FilterBar } from '@/components/tasks/filter-bar';
@@ -13,9 +13,11 @@ import { TaskListSkeleton } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import { useActiveUserId, useDatabaseReady } from '@/features/auth/session-context';
 import { hasAnyTasks } from '@/features/tasks/analytics';
-import { bulkDeleteTasks, bulkSetCompleted } from '@/features/tasks/service';
+import { bulkDeleteTasks, bulkSetCompleted, createTask } from '@/features/tasks/service';
 import { useProjects, useTags, useTaskList } from '@/hooks/use-task-list';
 import type { TaskFilters, TaskSort, TaskWithRelations } from '@/types/domain';
+import { parseQuickAdd } from '@/lib/utils/nl-parse';
+import { Plus } from 'lucide-react';
 
 /**
  * Shared task list view.
@@ -293,6 +295,13 @@ export function TaskListView({
                 emptyState={resolvedEmptyState}
               />
             )}
+            {quickAdd && databaseReady && !list.error ? (
+              <InlineAddRow
+                userId={userId}
+                defaultProjectId={quickAdd.defaultProjectId ?? null}
+                defaultDueDate={quickAdd.defaultDueDate ?? null}
+              />
+            ) : null}
           </PageContent>
         </div>
 
@@ -342,5 +351,76 @@ export function TaskListView({
         busy={bulkBusy}
       />
     </>
+  );
+}
+
+/**
+ * Inline task creation row.
+ *
+ * Renders at the bottom of the task list — the Notion pattern where you type
+ * directly where the next task will appear. Enter creates the task (with NL parse
+ * for dates/priorities), the input clears, and focus stays for the next task.
+ */
+function InlineAddRow({
+  userId,
+  defaultProjectId,
+  defaultDueDate,
+}: {
+  userId: string;
+  defaultProjectId: string | null;
+  defaultDueDate: string | null;
+}) {
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleKeyDown = async (e: React.KeyboardEvent): Promise<void> => {
+    if (e.key !== 'Enter') return;
+    const trimmed = value.trim();
+    if (!trimmed || saving) return;
+
+    e.preventDefault();
+    setSaving(true);
+
+    try {
+      const parsed = parseQuickAdd(trimmed);
+      await createTask(
+        { userId },
+        {
+          title: parsed.title || trimmed,
+          description: null,
+          project_id: defaultProjectId,
+          priority: parsed.priority ?? 'medium',
+          due_date: parsed.due_date ?? defaultDueDate,
+          start_date: null,
+          reminder_at: null,
+          tag_ids: [],
+        },
+      );
+      setValue('');
+      inputRef.current?.focus();
+    } catch {
+      // Keep the text so the user doesn't lose what they typed.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 border-t border-line px-3 py-2 sm:px-4">
+      <Plus aria-hidden="true" className="h-4 w-4 shrink-0 text-ink-muted" />
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => void handleKeyDown(e)}
+        placeholder="Add a task…  (try: meeting tomorrow #high)"
+        aria-label="Add a task at the end of the list"
+        maxLength={500}
+        className="h-8 min-w-0 flex-1 bg-transparent text-body text-ink placeholder:text-ink-muted focus:outline-none"
+      />
+      {saving ? <span className="shrink-0 text-meta text-ink-muted">Adding…</span> : null}
+    </div>
   );
 }
