@@ -11,7 +11,7 @@
  * createSubtask) which writes locally and queues mutations for a future sync.
  */
 
-import { getDatabase } from '@/lib/db/schema';
+import { getDatabase, liveRowsFor } from '@/lib/db/schema';
 import { isCloudConfigured, getSupabaseClient } from '@/lib/supabase/client';
 import { nowIsoSafe, newId } from '@/lib/db/helpers';
 import { createProject } from '@/features/projects/service';
@@ -72,15 +72,11 @@ export interface ImportResult {
 export async function exportUserData(userId: string): Promise<ExportData> {
   const db = getDatabase();
 
-  const [tasks, projects, subtasks] = await Promise.all([
-    db.tasks.where('user_id').equals(userId).toArray(),
-    db.projects.where('user_id').equals(userId).toArray(),
-    db.subtasks.where('user_id').equals(userId).toArray(),
+  const [liveTasks, liveProjects, liveSubtasks] = await Promise.all([
+    liveRowsFor(db.tasks, userId),
+    liveRowsFor(db.projects, userId),
+    liveRowsFor(db.subtasks, userId),
   ]);
-
-  const liveProjects = projects.filter((p) => p.deleted_at === null);
-  const liveTasks = tasks.filter((t) => t.deleted_at === null);
-  const liveSubtasks = subtasks.filter((s) => s.deleted_at === null);
 
   // Build a project id → index map so tasks can reference projects by position.
   const projectIndex = new Map(liveProjects.map((p, i) => [p.id, i]));

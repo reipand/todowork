@@ -185,8 +185,13 @@ export async function migrateGuestData(newUserId: string): Promise<{
     for (const name of tableNames) {
       // db.table(name) returns a loosely-typed Table, avoiding the union-type
       // incompatibility across the strongly-typed table properties on the class.
+      // filter() is used instead of where('user_id') because not every table has a
+      // standalone user_id index (mutations and conflicts only have compound indexes).
+      // A full scan is acceptable for a one-time migration.
       const table = db.table(name);
-      const rows = await table.where('user_id').equals(GUEST_USER_ID).toArray();
+      const rows = await table
+        .filter((row: Record<string, unknown>) => row.user_id === GUEST_USER_ID)
+        .toArray();
       if (rows.length > 0) {
         await table.bulkPut(rows.map((row: Record<string, unknown>) => ({ ...row, user_id: newUserId })));
       }
