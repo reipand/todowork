@@ -187,6 +187,13 @@ export async function pushMutation(input: {
 
   const payload = parsePayload(mutation.payload);
 
+  // RLS INSERT policies require `auth.uid() = user_id`, but the entity payloads built by the
+  // service layer do not include user_id (it lives on the Mutation, not the entity body).
+  // Inject it here so every create upsert satisfies the policy without changing every service.
+  if (mutation.operation === 'create') {
+    payload.user_id = mutation.user_id;
+  }
+
   // --- Conflict detection -------------------------------------------------------------
   if (mutation.operation !== 'create' && mutation.base_revision !== null) {
     const current = await fetchCurrentRow(mutation.entity_type, mutation.entity_id);
