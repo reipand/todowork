@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { CommandPalette } from '@/components/layout/command-palette';
 import { Sidebar } from '@/components/layout/sidebar';
 import { TopBar, MobileSyncRow } from '@/components/layout/top-bar';
 import { MobileBottomNav, MobileNavDrawer } from '@/components/layout/mobile-nav';
@@ -33,6 +34,20 @@ export function DashboardShell({ children }: DashboardShellProps) {
 
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+
+  // Cmd+K / Ctrl+K toggles the command palette. Registered on window so it works regardless of
+  // focus location — the user can be in the sidebar, the task list, or the detail panel.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // Read the persisted preference after mount. Reading it during render would produce a hydration
   // mismatch, because the static HTML is generated without access to storage.
@@ -97,6 +112,8 @@ export function DashboardShell({ children }: DashboardShellProps) {
       </div>
 
       <MobileBottomNav />
+
+      <CommandPalette open={commandPaletteOpen} onClose={() => setCommandPaletteOpen(false)} />
     </div>
   );
 }

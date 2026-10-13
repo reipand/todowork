@@ -101,8 +101,14 @@ export function TopBar({ onOpenMobileNav }: TopBarProps) {
           // A visually hidden label: the placeholder alone is not an accessible name, and a placeholder
           // disappears the moment the user types.
           aria-label="Search tasks"
-          className="h-9 w-full rounded-control border border-line-strong bg-surface pl-8 pr-3 text-body text-ink placeholder:text-ink-muted transition-colors duration-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
+          className="h-9 w-full rounded-control border border-line-strong bg-surface pl-8 pr-12 text-body text-ink placeholder:text-ink-muted transition-colors duration-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent"
         />
+        <kbd
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 shrink-0 rounded border border-line bg-surface px-1.5 py-0.5 text-meta text-ink-muted"
+        >
+          ⌘K
+        </kbd>
       </form>
 
       <div className="ml-auto flex items-center gap-1">
