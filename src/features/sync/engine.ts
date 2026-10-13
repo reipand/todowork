@@ -105,6 +105,13 @@ async function runSync(options: SyncOptions): Promise<SyncReport> {
     if (signal?.aborted) throw new SyncAbortedError();
   };
 
+  // Reset any mutations left 'in_flight' from a previous sync that was aborted, crashed, or
+  // interrupted by an account switch. Without this, a crashed sync leaves mutations stuck:
+  // drainQueue only processes 'pending', so 'in_flight' is never retried; but
+  // hasPendingMutationFor returns true for 'in_flight', so pulls for those entities are
+  // skipped forever. The user would have to delete local data to see remote updates.
+  await resetInFlightMutations(userId);
+
   // Phase 1: pull remote changes.
   onProgress?.('pulling');
   const cursor = await readCursor(userId);
@@ -158,6 +165,30 @@ async function writeCursor(
     last_push_at: fields.pushedAt ?? existing?.last_push_at ?? null,
     last_device_id: fields.deviceId ?? existing?.last_device_id ?? null,
   });
+}
+
+/* ---------------------------------------------------------------------------------------
+ * In-flight recovery
+ * ------------------------------------------------------------------------------------- */
+
+/**
+ * Resets all 'in_flight' mutations for a user back to 'pending'.
+ *
+ * A mutation is set to 'in_flight' just before it is pushed. If the sync is aborted (account
+ * switch, tab close, crash) between that status update and the push completing, the mutation
+ * is stranded: drainQueue only reads 'pending', so it is never retried, but
+ * hasPendingMutationFor counts 'in_flight', so the pull phase skips remote updates for that
+ * entity. The result is that the user's local data goes stale and the only recovery is
+ * deleting local data — which is exactly what this function prevents.
+ *
+ * Called at the top of every sync cycle, before the first pull.
+ */
+async function resetInFlightMutations(userId: string): Promise<void> {
+  const db = getDatabase();
+  await db.mutations
+    .where('[user_id+status]')
+    .equals([userId, 'in_flight'])
+    .modify({ status: 'pending' });
 }
 
 /* ---------------------------------------------------------------------------------------
