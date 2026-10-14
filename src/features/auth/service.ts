@@ -70,6 +70,19 @@ function translateAuthError(message: string, code?: string): string {
     return 'Choose a password you have not used for this account.';
   }
 
+  // Email-transport failures. Supabase returns these when email confirmations are enabled but
+  // the email service is unavailable or misconfigured. The signup itself did not complete — the
+  // user row is rolled back — so the user cannot retry sign-in. They need to wait for the
+  // service to recover or contact support; surfacing the generic "something went wrong" would
+  // send them in circles.
+  if (
+    normalised.includes('error sending confirmation email') ||
+    normalised.includes('error sending email') ||
+    code === 'unexpected_failure'
+  ) {
+    return 'We could not send your confirmation email. The email service may be temporarily unavailable. Try again in a moment, or contact support if it persists.';
+  }
+
   // Unmapped errors get a neutral message rather than the raw text, which could expose internals.
   return 'Something went wrong. Please try again.';
 }

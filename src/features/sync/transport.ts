@@ -167,7 +167,7 @@ export async function pushMutation(input: {
     .single();
 
   if (ledgerInsert.error) {
-    // 23505 is unique_violation: the key already exists, so this mutation already ran.
+    // 23505 is unique_violation: the key already exists, so this mutation ran before.
     if (ledgerInsert.error.code === '23505') {
       const existing = await supabase
         .from('sync_mutations')
@@ -176,13 +176,22 @@ export async function pushMutation(input: {
         .eq('idempotency_key', mutation.idempotency_key)
         .maybeSingle();
 
-      return {
-        kind: 'duplicate',
-        revision: existing.data?.result_revision ?? null,
-      };
+      // Only treat as a duplicate when the original run recorded a result_revision — that
+      // proves the apply completed. A null result_revision means the ledger row was inserted
+      // but the apply never finished (transient failure on a previous attempt). Returning
+      // 'duplicate' in that case would make the engine delete the mutation and mark the
+      // entity synced even though the write never reached the server — silent data loss.
+      // Instead, fall through and apply now; the upsert/update is idempotent, so
+      // re-applying is safe. recordLedgerRevision will fill in the revision afterward.
+      if (existing.data?.result_revision != null) {
+        return {
+          kind: 'duplicate',
+          revision: existing.data.result_revision,
+        };
+      }
+    } else {
+      throw new Error(ledgerInsert.error.message);
     }
-
-    throw new Error(ledgerInsert.error.message);
   }
 
   const payload = parsePayload(mutation.payload);
@@ -278,8 +287,12 @@ export async function pushMutation(input: {
       .eq('idempotency_key', mutation.idempotency_key)
       .maybeSingle();
 
-    if (verification.data) {
-      return { kind: 'duplicate', revision: verification.data.result_revision ?? null };
+    // Only trust the ledger as proof of prior completion when result_revision is set. A null
+    // result_revision means the ledger row was inserted earlier but the apply never confirmed —
+    // the very situation that brought us into this catch. Treating that as 'duplicate' would
+    // delete the mutation and mark the entity synced with no server-side write: data loss.
+    if (verification.data?.result_revision != null) {
+      return { kind: 'duplicate', revision: verification.data.result_revision };
     }
 
     throw error;
