@@ -148,3 +148,20 @@ Sudah fixed di `sw.js` v2. Pastikan deploy terbaru sudah live.
 1. Pastikan `supabase/setup_all.sql` sudah di-run di Supabase SQL Editor
 2. Cek Supabase Dashboard → Authentication → URL Configuration → Redirect URLs termasuk `https://todowork.reip.my.id/auth/callback`
 3. Hard refresh sekali untuk load SW + JS terbaru
+
+### Registrasi gagal: "Error sending confirmation email"
+
+Email confirmations ON tapi SMTP belum dikonfigurasi. Solusi:
+
+- **Dev**: matikan Confirm email di Supabase Dashboard → Authentication → Sign In / Providers → User Signups → Confirm email = OFF
+- **Production**: konfigurasi custom SMTP (Brevo, Resend) di Authentication → SMTP Settings
+
+### Sign in gagal: "email_not_confirmed"
+
+Confirm email ON dan user belum klik link konfirmasi. Manual confirm di Supabase Dashboard → Authentication → Users → klik user → Confirm.
+
+### Lihat juga
+
+- **Docs page**: `/docs` — dokumentasi + tutorial lengkap di browser
+- **Architecture**: `docs/ARCHITECTURE.md`
+- **Sync conflicts**: `docs/SYNC-CONFLICTS.md` (coming soon)

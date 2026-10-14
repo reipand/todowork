@@ -161,6 +161,14 @@ npm run format       # Prettier write
 npm run test         # Vitest (no tests yet)
 ```
 
+- **Mobile (Capacitor)**: Wrap the same web app for Android and iOS. See `docs/DEPLOYMENT.md`. |
+
+## Docs Page
+
+A built-in documentation and tutorial page is available at `/docs` in the running app.
+It covers database setup, environment configuration, a step-by-step tutorial, sync
+explanation, troubleshooting, and architecture summary.
+
 ## Deployment
 
 ### Static host (Nginx)

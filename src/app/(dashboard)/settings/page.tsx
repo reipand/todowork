@@ -4,7 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, Download, LogIn, LogOut, Trash2, Upload } from 'lucide-react';
+import { ChevronRight, Download, BookOpen, LogIn, LogOut, Trash2, Upload } from 'lucide-react';
 
 import { PageContent, PageHeader, SectionHeading } from '@/components/layout/page-header';
 import { ConfirmDialog } from '@/components/ui/dialog';
@@ -331,6 +331,22 @@ export default function SettingsPage() {
                 <span className="text-body font-medium text-ink">Sync status and conflicts</span>
                 <span className="text-meta text-ink-muted">
                   See pending changes, retry failures, and resolve conflicts.
+                </span>
+              </span>
+              <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-ink-muted" />
+            </Link>
+          </section>
+
+          <section className="rounded-card border border-line bg-surface p-4">
+            <Link
+              href="/docs"
+              className="flex items-center gap-3 text-ink hover-hover"
+            >
+              <BookOpen aria-hidden="true" className="h-5 w-5 shrink-0 text-ink-muted" />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-body font-medium text-ink">Docs &amp; Tutorial</span>
+                <span className="text-meta text-ink-muted">
+                  Setup guide, how-to, sync explanation, and troubleshooting.
                 </span>
               </span>
               <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-ink-muted" />
