@@ -1,8 +1,8 @@
-// Todowork service worker — v2
+// Todowork service worker — v3
 // Network-first for navigation (always latest HTML), stale-while-revalidate for assets.
 // Auto-activates on install and on SKIP_WAITING message so deployed updates apply instantly.
 
-const CACHE = 'todowork-v2';
+const CACHE = 'todowork-v3';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -48,7 +48,21 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() =>
-          caches.match(request).then((cached) => cached || caches.match('/')),
+          caches
+            .match(request)
+            .then((cached) => cached || caches.match('/'))
+            .then(
+              (cached) =>
+                cached ||
+                new Response(
+                  '<!DOCTYPE html><meta charset="utf-8"><title>Offline</title>' +
+                    '<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;' +
+                    'justify-content:center;min-height:100vh;margin:0;color:#1a1a19;background:#fbfaff}' +
+                    'p{text-align:center;font-size:1.125rem}</style>' +
+                    '<p>You are offline. Reconnect to continue.</p>',
+                  { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+                ),
+            ),
         ),
     );
     return;
