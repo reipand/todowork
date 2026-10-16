@@ -333,15 +333,34 @@ export function onAuthStateChange(
 }
 
 /**
+ * Reads the HTTP status out of a `functions.invoke` failure.
+ *
+ * `FunctionsHttpError` carries the upstream response on `error.context`, and the status code lives
+ * there — not in `error.message`. The previous implementation searched the message text for "404"
+ * or "not found", which never matched: an undeployed function produces the generic message
+ * "Edge Function returned a non-2xx status code". That mismatch is why a missing function was
+ * reported to the user as an unexplained failure instead of a deployment gap.
+ *
+ * Returns `null` when there is no response at all, which means the request never reached a server
+ * (offline, DNS failure, CORS rejection) rather than reaching one and being refused.
+ */
+function readFunctionErrorStatus(error: unknown): number | null {
+  const context = (error as { context?: { status?: unknown } } | null)?.context;
+  const status = context?.status;
+
+  return typeof status === 'number' ? status : null;
+}
+
+/**
  * Permanently deletes the account and all its data.
  *
  * This cannot be done from the client: deleting a user requires the Admin API and therefore the
- * service_role key, which must never ship to a client. The correct implementation is an Edge
- * Function holding that key server-side, called from here with the user's own JWT so it can confirm
- * identity.
+ * service_role key, which must never ship to a client. The `delete-account` Edge Function holds
+ * that key server-side and is called from here with the user's own JWT, which is what lets it
+ * confirm who is asking. See supabase/functions/delete-account and docs/DEPLOYMENT.md.
  *
- * Until that function is deployed, this returns a clear not-configured result rather than pretending
- * to delete anything. See docs/DEPLOYMENT.md for the Edge Function.
+ * The deletion is immediate, not deferred by a confirmation email, so a success result means the
+ * account is already gone and the caller should sign out.
  */
 export async function requestAccountDeletion(): Promise<AuthResult<null>> {
   const supabase = getSupabaseClient();
@@ -351,9 +370,11 @@ export async function requestAccountDeletion(): Promise<AuthResult<null>> {
   });
 
   if (error) {
+    const status = readFunctionErrorStatus(error);
+
     // A missing function is a deployment state, not an error the user caused, so it gets its own
-    // explanation rather than the generic failure text.
-    if (error.message.includes('not found') || error.message.includes('404')) {
+    // explanation naming the actual remedy rather than the generic failure text.
+    if (status === 404) {
       return {
         ok: false,
         formError:
@@ -362,11 +383,42 @@ export async function requestAccountDeletion(): Promise<AuthResult<null>> {
       };
     }
 
-    return { ok: false, formError: 'Could not start account deletion. Please try again.' };
+    // No response at all: the request never landed. Distinguished from a server refusal because
+    // retrying is the right advice here and misleading advice otherwise.
+    if (status === null) {
+      return {
+        ok: false,
+        formError:
+          'Could not reach the server to delete your account. Check your connection and try again.',
+      };
+    }
+
+    if (status === 401 || status === 403) {
+      return {
+        ok: false,
+        formError: 'Your session has expired. Sign in again, then retry account deletion.',
+      };
+    }
+
+    // The function itself failed (for example a transient Admin API error). It deletes nothing on
+    // failure, so the honest statement is that nothing was removed.
+    return {
+      ok: false,
+      formError: 'Could not delete the account. Nothing was removed. Please try again.',
+    };
   }
 
   if (data && typeof data === 'object' && 'error' in data) {
     return { ok: false, formError: String((data as { error: unknown }).error) };
+  }
+
+  // A 2xx response with no recognisable body would mean the account was deleted but the result is
+  // unconfirmed, so it is treated as a failure the user can retry rather than a silent success.
+  if (!data || typeof data !== 'object' || !('ok' in data) || data.ok !== true) {
+    return {
+      ok: false,
+      formError: 'The server did not confirm the deletion. Check your account before retrying.',
+    };
   }
 
   return { ok: true };

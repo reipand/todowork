@@ -160,6 +160,37 @@ Email confirmations ON tapi SMTP belum dikonfigurasi. Solusi:
 
 Confirm email ON dan user belum klik link konfirmasi. Manual confirm di Supabase Dashboard → Authentication → Users → klik user → Confirm.
 
+### Hapus akun gagal: "Account deletion needs the delete-account Edge Function"
+
+Fitur hapus akun butuh Edge Function `delete-account`, karena menghapus user memerlukan Admin API dan
+karenanya `service_role` key — key itu tidak boleh ada di client (web atau mobile). Function ini
+di-deploy **sekali saja**:
+
+```bash
+# 1. Set secret. service_role key hanya hidup di runtime Edge Function, bukan di .env.local.
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+# 2. (Opsional) daftar origin yang boleh memanggil, dipisah koma. Default sudah mencakup
+#    localhost:3000 dan skema Capacitor (https://localhost, capacitor://localhost).
+#    Tambahkan domain produksi supaya web app bisa memanggilnya.
+supabase secrets set DELETE_ACCOUNT_ALLOWED_ORIGINS=https://todowork.reip.my.id
+
+# 3. Deploy.
+supabase functions deploy delete-account
+```
+
+Catatan penting:
+
+- **Hapus akun bersifat langsung**, tidak menunggu konfirmasi email. Setelah sukses, user langsung
+  di-sign-out. Semua baris milik user (projects, tasks, tags, task_tags, task_subtasks, dan tiga
+  tabel sync) ikut terhapus karena setiap FK ke `auth.users` memakai `on delete cascade`.
+- **`SUPABASE_SERVICE_ROLE_KEY` tidak boleh masuk `.env.local`** dan tidak boleh diberi prefix
+  `NEXT_PUBLIC_`. Kalau nilai itu sampai ke bundle client, seluruh RLS jadi tidak ada artinya.
+  Function ini memverifikasi JWT pemanggil, dan menghapus **hanya** user yang token-nya valid.
+- `verify_jwt = false` di `supabase/config.toml` itu disengaja: function memverifikasi token sendiri
+  lewat `auth.getUser(accessToken)` terhadap Auth server, sehingga token yang sudah di-revoke pun
+  ditolak — pengecekan tanda tangan saja tidak menangkap kasus itu.
+
 ### Lihat juga
 
 - **Docs page**: `/docs` — dokumentasi + tutorial lengkap di browser

@@ -89,14 +89,13 @@ export default function SettingsPage() {
     setDeleteAccountOpen(false);
 
     if (result.ok) {
-      toast(
-        'Account deletion started. You will receive a confirmation email. Signing out of this device now.',
-        { tone: 'success' },
-      );
+      toast('Your account and all its data have been deleted. Signing out of this device now.', {
+        tone: 'success',
+      });
       await signOutCurrentUser();
       router.push('/sign-in');
     } else {
-      toast(result.formError ?? 'Could not start account deletion.', { tone: 'danger' });
+      toast(result.formError ?? 'Could not delete the account.', { tone: 'danger' });
     }
   };
 
@@ -370,7 +369,7 @@ export default function SettingsPage() {
         onClose={() => setDeleteAccountOpen(false)}
         onConfirm={() => void handleDeleteAccount()}
         title="Delete your account?"
-        description="This starts permanent deletion of your account and all synced data. The Edge Function must be deployed for this to complete. This cannot be undone."
+        description="Your account and all synced data are permanently deleted right away. Tasks on this device are separate and stay until you remove them. This cannot be undone."
         confirmLabel="Delete account"
         tone="danger"
         busy={busy}

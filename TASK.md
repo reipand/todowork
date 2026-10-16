@@ -1,6 +1,6 @@
 # Todowork — Work Handoff
 
-**Last worked:** 2026-10-12
+**Last worked:** 2026-10-16
 **Product:** Todowork — "Organize your tasks. Own your time."
 **Goal:** A real, working offline-first task manager (web + PWA + Android/iOS via Capacitor), Next.js
 App Router + TypeScript strict + Tailwind + Dexie/IndexedDB + Supabase, deployed to an Ubuntu VPS
@@ -293,8 +293,7 @@ Route (pages)
     `docs/BACKUP.md`, `docs/KNOWN-LIMITATIONS.md`, `docs/ACCESSIBILITY.md`.
 15. Nginx vhost + TLS instructions, safe deploy script with rollback, health check, log handling.
 16. `.gitignore` and `git init`.
-17. Edge Function for account deletion (the static export has no server, so this cannot be a route
-    handler — see `docs/ARCHITECTURE.md`). Documented, **not yet written**.
+17. Edge Function for account deletion — **WRITTEN AND WIRED** (2026-10-16). `supabase/functions/delete-account/index.ts`, registered in `supabase/config.toml` (`verify_jwt = false`, function self-verifies), documented in `docs/DEPLOYMENT.md`. Deletion is **immediate**, not email-deferred. Not yet deployed — needs `supabase functions deploy delete-account` plus the `SUPABASE_SERVICE_ROLE_KEY` secret. See §11.
 
 **Phase F — Verification gate**
 18. Run the antislop Delivery Gate (PASS/FAIL with evidence) and the R-35 recorded click-through.
@@ -365,14 +364,66 @@ These need your credentials, devices, or environment:
 | 11 | Successful Android build | NOT STARTED |
 | 12 | Successful iOS build | NOT STARTED (needs macOS) |
 | 13 | Security policies tested | Written, **not executed** |
-| 14 | Typecheck / lint / test / build reported | typecheck PASS, lint PASS, build INCOMPLETE, tests NOT RUN |
+| 14 | Typecheck / lint / test / build reported | typecheck PASS, lint PASS (6 warnings), test 7/7 PASS, build exit 0 with real routes |
 | 15 | Repeatable deployment with rollback | NOT STARTED |
 | 16 | No secrets in source or client bundle | Held so far (placeholders only) |
+| 17 | Account deletion works | Function written + tested; **not deployed** (see §11) |
 
 **Honest summary:** the architecture and domain/data layer are in place and typecheck cleanly. No
 user-facing page exists yet, so nothing is runnable, and **not one test or migration has been
 executed**. The build currently succeeds while producing an app with no routes — that gap is the
 first thing to close.
+
+---
+
+## 11. Account deletion fix (2026-10-16)
+
+**Reported symptom:** clicking "Delete account" in Settings showed *"Could not start account
+deletion. Please try again."* — an unexplained failure with no actionable cause.
+
+**Two compounding defects.**
+
+1. **The error detection never matched.** `requestAccountDeletion` decided an undeployed function by
+   searching `error.message` for `"404"` or `"not found"`. `supabase.functions.invoke` does not put
+   the status there: it attaches the upstream response to `error.context.status`, and the message is
+   the generic `"Edge Function returned a non-2xx status code"`. So the helpful "not deployed"
+   branch was dead code and every case fell through to the generic text.
+2. **The Edge Function did not exist.** No `supabase/functions/` directory; `docs/DEPLOYMENT.md`
+   had no mention of it either, so the error message's own instruction pointed nowhere.
+
+**Fix.**
+
+- `supabase/functions/delete-account/index.ts` — verifies the caller's JWT with `auth.getUser()`
+  (rejects revoked tokens, which a signature check alone would accept), then deletes that user via
+  the Admin API with a service-role client. The user id comes **only** from the verified token, never
+  from the request body, so one user cannot delete another. CORS allowlist covers the web origin and
+  the Capacitor schemes (`https://localhost`, `capacitor://localhost`). `on delete cascade` on every
+  FK to `auth.users` means the user's rows go with it — verified across all four migrations, including
+  the three sync tables, so no manual delete ordering is needed.
+- `service.ts` — replaced the string search with `readFunctionErrorStatus(error)`, reading
+  `error.context.status`. Each outcome now has its own message: 404 → deploy the function;
+  no response → unreachable, retry; 401/403 → session expired; other → nothing was removed.
+- **Semantics changed from deferred to immediate.** The old UI copy promised a confirmation email;
+  the function deletes at once, so the toast and the ConfirmDialog description were rewritten to say
+  so. A 2xx with an unrecognised body is treated as *unconfirmed*, not success — the client must not
+  sign the user out believing the account is gone when it may not be.
+- `tsconfig.json` — `supabase/functions` added to `exclude`. Edge Functions are Deno, and the
+  `**/*.ts` glob was pulling them into the Next.js project, producing 8 errors for `Deno` and the
+  `esm.sh` import. They get their own `supabase/functions/delete-account/tsconfig.json`.
+- `docs/DEPLOYMENT.md` — added the deploy steps, the secrets, and an explicit warning that
+  `SUPABASE_SERVICE_ROLE_KEY` must never enter `.env.local` or a `NEXT_PUBLIC_*` variable.
+
+**Tests (the first tests in the repo).** `tests/unit/auth/account-deletion.test.ts`, 7 cases over the
+error mapping. `tests/setup.ts` and `vitest.config.ts` were added to make a suite runnable at all
+(pulled forward from Phase D). Verified these are a real regression lock, not decoration: disabling
+the `status === 404` branch makes exactly the 404 test fail.
+
+**Verified:** `tsc --noEmit` exit 0, `eslint` exit 0 (6 warnings, 5 pre-existing), `vitest run` 7/7
+pass, `npm run verify` exit 0, `next build` exit 0 with all routes still prerendered as static —
+**static export is intact**, no route handlers were introduced, and `out/index.html` was produced.
+
+**Still needs you:** `supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...` and
+`supabase functions deploy delete-account`, then a live deletion of a throwaway account.
 
 ---
 
@@ -384,7 +435,7 @@ npm install-scripts approve esbuild unrs-resolver   # first time only
 
 npm run typecheck      # tsc --noEmit          -> currently PASS
 npm run lint           # eslint               -> currently PASS
-npm run test           # vitest run           -> no tests yet
+npm run test           # vitest run           -> 7/7 pass (account deletion mapping)
 npm run test:e2e       # playwright           -> no tests yet
 npm run build          # next build           -> succeeds but exports no routes (see §2)
 npm run dev            # next dev

@@ -78,6 +78,16 @@ content_path = "./supabase/templates/email_change.html"
 subject = "You have been invited to Todowork"
 content_path = "./supabase/templates/invite.html"
 
+[functions.delete-account]
+# Deleting a user requires the Admin API and therefore the service_role key, which cannot ship to a
+# client, so the only correct implementation is a server function. See supabase/functions/delete-account.
+#
+# The platform check is disabled because the function performs its own verification with
+# `auth.getUser(accessToken)` against the Auth server. That is stricter than the platform's
+# signature check: it rejects a token that is well-signed but revoked, which is exactly the case
+# that matters for an irreversible action.
+verify_jwt = false
+
 [analytics]
 enabled = false
 
