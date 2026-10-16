@@ -42,4 +42,9 @@ ios/
 node_modules
 
 .vercel
+# Blanket rule, kept narrow on purpose. `.env*` here would also swallow .env.example, which is
+# meant to be committed: it is the setup reference (placeholder values only) that a fresh clone
+# reads before creating .env.local. Real secrets are already excluded by the explicit rules
+# above, so the wildcard buys nothing and cost this file its tracking.
 .env*
+!.env.example
