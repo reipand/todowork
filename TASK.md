@@ -425,19 +425,42 @@ pass, `npm run verify` exit 0, `next build` exit 0 with all routes still prerend
 **Still needs you:** `supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...` and
 `supabase functions deploy delete-account`, then a live deletion of a throwaway account.
 
-### 11.1 Follow-up (2026-10-16): production still showed the old message
+### 11.1 Follow-up (2026-10-16): the function is not deployed
 
 **Verified against the live deployment, not assumed.**
 
 - `list_edge_functions` on project `vubhsisjsqpbmyjfflre` returns **`functions: []`** — the function
   is **not deployed**. The code exists in the repo only.
-- The Vercel bundle is **stale**. Chunk `431-8d537506fe978075.js` served from
-  `todo-reipands-projects.vercel.app` still contains the old minified logic
-  (`a.message.includes("not found")||a.message.includes("404")`). The fix has never been deployed.
-  (The canonical production origin is `https://todowork.reip.my.id`; the Vercel hostname was what I
-  inspected.)
-- So both symptoms have the same root cause: **nothing was shipped.** The Supabase project has no
-  function, and Vercel is serving the pre-fix build.
+- The client fix **is** live. `git log` shows `c2ff562` on `origin/main`, and the deployed chunk
+  (`431-857fdb053a3b2f79.js` on `todowork.reip.my.id`) contains the new minified logic — a
+  `context.status` read plus the missing-function check evaluated before the offline branch.
+- So the CORS failure has a single root cause: **there is no function to call.** The client is
+  correct; there is simply nothing at the other end.
+
+**A correction to an earlier claim in this file.** A previous version of this section asserted the
+Vercel bundle was stale and still contained
+`a.message.includes("not found")||a.message.includes("404")`. That was **wrong**, and the error is
+worth recording so the same bad check is not trusted again: the deployed bundle was detected by
+testing `chunk.includes('not found')`, which the *new* code also satisfies — `looksLikeMissingFunction`
+contains the literal `'not found'` substring it searches for. A substring test cannot distinguish old
+code from new code that mentions the same string. The reliable check is to read the surrounding
+minified logic, which was done on re-inspection and shows the fix present.
+
+**Why a preflight for a missing function fails CORS.** A direct `OPTIONS` to the function path
+returns 404 with `access-control-allow-origin: *`, body
+`{"code":"NOT_FOUND","message":"Requested function was not found"}` and `sb-error-code: NOT_FOUND` —
+but `access-control-allow-methods` is **`null`**. The browser requires `Access-Control-Allow-Methods`
+for a preflight to pass, so it blocks the request before `fetch` sees any response, producing
+`Response to preflight request doesn't pass access control check: It does not have HTTP ok status`
+and `ERR_FAILED`. That missing header, not the 404 status, is what surfaces as the CORS error: the
+gateway's `allow-origin: *` is present but insufficient on its own.
+
+The client therefore gets a bare `TypeError: Failed to fetch` with **no status** — which the old code
+reported as "check your connection", blaming the user's network for a deployment gap.
+
+Fixed with `looksLikeMissingFunction(error)`, which treats a 404 **or** an unambiguous
+`"Failed to fetch"` / `"not found"` as a missing function, and is checked *before* the
+network-error branch.
 
 **A real gap the production error exposed.** A direct `OPTIONS` to the function path returns 404 with
 `access-control-allow-origin: *` and body `{"code":"NOT_FOUND","message":"Requested function was not
