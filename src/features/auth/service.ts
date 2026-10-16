@@ -341,14 +341,47 @@ export function onAuthStateChange(
  * "Edge Function returned a non-2xx status code". That mismatch is why a missing function was
  * reported to the user as an unexplained failure instead of a deployment gap.
  *
- * Returns `null` when there is no response at all, which means the request never reached a server
- * (offline, DNS failure, CORS rejection) rather than reaching one and being refused.
+ * Returns `null` when there is no HTTP response to read.
  */
 function readFunctionErrorStatus(error: unknown): number | null {
   const context = (error as { context?: { status?: unknown } } | null)?.context;
   const status = context?.status;
 
   return typeof status === 'number' ? status : null;
+}
+
+/**
+ * True when a failed `functions.invoke` looks like the function is not deployed.
+ *
+ * There are two distinct ways a missing function presents, and only one of them carries a status:
+ *
+ *   1. The gateway answers with 404 (`{"code":"NOT_FOUND"}`), which arrives as `context.status`.
+ *   2. The browser blocks the call first. Supabase's gateway answers a preflight for an unknown
+ *      function with a 404 that omits the `Access-Control-Allow-Methods`/`Allow-Headers` the
+ *      browser requires, so the preflight fails and `fetch` rejects with a bare
+ *      "Failed to fetch" TypeError. No response object exists, so there is no status to read.
+ *
+ * Case 2 is the reason the status check alone is not enough. Treating it as a generic network
+ * error would tell an offline user to "check your connection" when their connection is fine and
+ * the real remedy is to deploy the function.
+ *
+ * Note on scope: Supabase emits "Failed to send a request to the Edge Function" for both a blocked
+ * preflight and a genuine offline failure, and the two are indistinguishable from the client. That
+ * string is deliberately NOT matched here, because matching it would claim a deployment gap for
+ * every offline user. Only the unambiguous "Failed to fetch" TypeError (what the browser raises
+ * when CORS blocks a request) and an explicit 404 are treated as a missing function. The offline
+ * case keeps its own "check your connection" message, which is right for the far more common
+ * situation.
+ *
+ * The message text is consulted only to choose between two explanations the user might act on. It
+ * is never used to decide whether an operation succeeded.
+ */
+function looksLikeMissingFunction(error: unknown): boolean {
+  if (readFunctionErrorStatus(error) === 404) return true;
+
+  const message = String((error as { message?: unknown } | null)?.message ?? '').toLowerCase();
+
+  return message.includes('failed to fetch') || message.includes('not found');
 }
 
 /**
@@ -372,9 +405,9 @@ export async function requestAccountDeletion(): Promise<AuthResult<null>> {
   if (error) {
     const status = readFunctionErrorStatus(error);
 
-    // A missing function is a deployment state, not an error the user caused, so it gets its own
-    // explanation naming the actual remedy rather than the generic failure text.
-    if (status === 404) {
+    // Checked before the network-error case, because a CORS-blocked preflight also has no status
+    // and would otherwise be misreported as an offline problem. See looksLikeMissingFunction.
+    if (looksLikeMissingFunction(error)) {
       return {
         ok: false,
         formError:
@@ -383,8 +416,8 @@ export async function requestAccountDeletion(): Promise<AuthResult<null>> {
       };
     }
 
-    // No response at all: the request never landed. Distinguished from a server refusal because
-    // retrying is the right advice here and misleading advice otherwise.
+    // No response and not a missing-function signature: the request genuinely did not land.
+    // Retrying is the right advice here, and misleading advice otherwise.
     if (status === null) {
       return {
         ok: false,

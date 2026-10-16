@@ -38,13 +38,16 @@ enabled = true
 site_url = "http://localhost:3000"
 # Both the bare origin and the wildcard path are listed because Supabase matches the exact
 # redirect target, and auth callbacks can land on either form depending on configuration.
+#
+# Vercel preview deployments get a per-build hostname that cannot be listed here in advance. To test
+# an auth flow on a preview, add that specific origin here temporarily.
 additional_redirect_urls = [
   "http://localhost:3000",
   "http://localhost:3000/**",
   "http://localhost:3000/auth/callback",
-  "https://tasks.example.com",
-  "https://tasks.example.com/**",
-  "https://tasks.example.com/auth/callback"
+  "https://todowork.reip.my.id",
+  "https://todowork.reip.my.id/**",
+  "https://todowork.reip.my.id/auth/callback"
 ]
 jwt_expiry = 3600
 # Sessions must survive an app restart on mobile, so refresh tokens are enabled, which is the

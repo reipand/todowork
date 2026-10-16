@@ -425,6 +425,50 @@ pass, `npm run verify` exit 0, `next build` exit 0 with all routes still prerend
 **Still needs you:** `supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...` and
 `supabase functions deploy delete-account`, then a live deletion of a throwaway account.
 
+### 11.1 Follow-up (2026-10-16): production still showed the old message
+
+**Verified against the live deployment, not assumed.**
+
+- `list_edge_functions` on project `vubhsisjsqpbmyjfflre` returns **`functions: []`** — the function
+  is **not deployed**. The code exists in the repo only.
+- The Vercel bundle is **stale**. Chunk `431-8d537506fe978075.js` served from
+  `todo-reipands-projects.vercel.app` still contains the old minified logic
+  (`a.message.includes("not found")||a.message.includes("404")`). The fix has never been deployed.
+  (The canonical production origin is `https://todowork.reip.my.id`; the Vercel hostname was what I
+  inspected.)
+- So both symptoms have the same root cause: **nothing was shipped.** The Supabase project has no
+  function, and Vercel is serving the pre-fix build.
+
+**A real gap the production error exposed.** A direct `OPTIONS` to the function path returns 404 with
+`access-control-allow-origin: *` and body `{"code":"NOT_FOUND","message":"Requested function was not
+found"}`. But an *unknown* function's preflight omits the `Access-Control-Allow-Methods` /
+`Allow-Headers` the browser needs, so the browser rejects the call before `fetch` ever sees a
+response. The client therefore gets a bare `TypeError: Failed to fetch` with **no status** — which
+the old code reported as "check your connection", blaming the user's network for a deployment gap.
+
+Fixed with `looksLikeMissingFunction(error)`, which treats a 404 **or** an unambiguous
+`"Failed to fetch"` / `"not found"` as a missing function, and is checked *before* the
+network-error branch.
+
+**Deliberate limit, recorded because it is a real trade-off:** Supabase emits
+`"Failed to send a request to the Edge Function"` for *both* a blocked preflight and a genuine
+offline failure, and the client cannot tell them apart. That string is **not** matched, because
+matching it would claim a deployment gap for every offline user. Offline keeps its own "check your
+connection" message. Only the unambiguous TypeError is treated as a deployment gap.
+
+**Tests now 10/10**, including the two production presentations (preflight-blocked TypeError, and
+gateway 404) plus a guard that a genuine offline error is *not* misreported as undeployed.
+
+**Docs:** `docs/DEPLOYMENT.md` gained the symptom, the curl check that distinguishes
+"not deployed" from "origin not allowed", and `DELETE_ACCOUNT_ALLOWED_ORIGINS` must list the Vercel
+origin — the function's default allowlist covers only localhost and the Capacitor schemes, so the
+Vercel deployment needs it set or every preflight fails.
+
+**Correction to an earlier note:** `/docs` and `/settings/sync` both exist and build
+(`src/app/docs/page.tsx`, `src/app/(dashboard)/settings/sync/page.tsx`). An earlier check of mine
+reported them missing; it only listed top-level folders under `src/app/(dashboard)` and missed
+`src/app/docs` and the `[id]`/`sync` subfolders. They are fine.
+
 ---
 
 ## 10. Quick commands

@@ -66,14 +66,16 @@ describe('requestAccountDeletion', () => {
   });
 
   it('reports an unreachable server when there is no response at all', async () => {
-    // No `context.status`: the request never reached a server, so retrying is the right advice
-    // rather than telling the user the service failed.
+    // Supabase raises this for a genuine reachability failure. It is also what a blocked preflight
+    // can look like, so the two are indistinguishable; this string is deliberately not treated as
+    // a deployment gap, because the offline explanation is right far more often.
     invoke.mockResolvedValue({ data: null, error: functionError(undefined) });
 
     const result = await requestAccountDeletion();
 
     expect(result.ok).toBe(false);
     expect(result.formError).toContain('Check your connection');
+    expect(result.formError).not.toContain('not been deployed');
   });
 
   it('asks the user to sign in again on 401', async () => {
@@ -83,6 +85,57 @@ describe('requestAccountDeletion', () => {
 
     expect(result.ok).toBe(false);
     expect(result.formError).toContain('session has expired');
+  });
+
+  it('reports a missing Edge Function when the browser blocks the preflight (CORS)', async () => {
+    // The real production case: Supabase's gateway answers a preflight for an unknown function
+    // with a 404 that lacks the Access-Control-Allow-Methods header, so the browser rejects the
+    // call itself and `fetch` raises a bare TypeError with no response. Observed live against
+    // https://<ref>.supabase.co/functions/v1/delete-account before the function was deployed.
+    const corsError = new TypeError('Failed to fetch');
+    corsError.name = 'FunctionsFetchError';
+
+    invoke.mockResolvedValue({ data: null, error: corsError });
+
+    const result = await requestAccountDeletion();
+
+    expect(result.ok).toBe(false);
+    expect(result.formError).toContain('delete-account Edge Function');
+    expect(result.formError).not.toContain('Check your connection');
+  });
+
+  it('reports a missing Edge Function when the gateway returns its NOT_FOUND body', async () => {
+    // The other presentation: no preflight, the gateway answers directly. The status still rides
+    // on error.context, and the body names the cause.
+    invoke.mockResolvedValue({
+      data: null,
+      error: Object.assign(new Error('Edge Function returned a non-2xx status code'), {
+        name: 'FunctionsHttpError',
+        context: { status: 404 },
+      }),
+    });
+
+    const result = await requestAccountDeletion();
+
+    expect(result.ok).toBe(false);
+    expect(result.formError).toContain('not been deployed');
+  });
+
+  it('still reports an unreachable server for a non-missing-function network failure', async () => {
+    // A genuine offline/DNS failure must not be mistaken for a deployment gap, so the
+    // missing-function heuristic has to stay narrow.
+    invoke.mockResolvedValue({
+      data: null,
+      error: Object.assign(new Error('NetworkError when attempting to fetch resource.'), {
+        name: 'FunctionsFetchError',
+      }),
+    });
+
+    const result = await requestAccountDeletion();
+
+    expect(result.ok).toBe(false);
+    expect(result.formError).toContain('Check your connection');
+    expect(result.formError).not.toContain('not been deployed');
   });
 
   it('surfaces an error message returned in the body', async () => {

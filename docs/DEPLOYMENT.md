@@ -168,15 +168,36 @@ di-deploy **sekali saja**:
 
 ```bash
 # 1. Set secret. service_role key hanya hidup di runtime Edge Function, bukan di .env.local.
+#    Ambil dari Supabase Dashboard → Project Settings → API → service_role secret.
 supabase secrets set SUPABASE_SERVICE_ROLE_KEY=eyJ...
 
-# 2. (Opsional) daftar origin yang boleh memanggil, dipisah koma. Default sudah mencakup
-#    localhost:3000 dan skema Capacitor (https://localhost, capacitor://localhost).
-#    Tambahkan domain produksi supaya web app bisa memanggilnya.
+# 2. Daftar origin yang boleh memanggil, dipisah koma. WAJIB: origin tempat app di-deploy,
+#    kalau tidak, preflight akan diblokir browser dan muncul error CORS.
+#    Origin ditulis TANPA trailing slash (browser mengirim Origin tanpa "/").
+#    Preview Vercel punya hostname sendiri, jadi tambahkan juga kalau dipakai untuk tes.
 supabase secrets set DELETE_ACCOUNT_ALLOWED_ORIGINS=https://todowork.reip.my.id
 
 # 3. Deploy.
 supabase functions deploy delete-account
+```
+
+**Kalau langkah 2 dilewatkan**, preflight akan gagal dan browser akan menampilkan:
+
+```
+Access to fetch at 'https://<ref>.supabase.co/functions/v1/delete-account' from origin
+'https://<domain>' has been blocked by CORS policy: Response to preflight request doesn't pass
+access control check: It does not have HTTP ok status.
+```
+
+Ini bukan berarti function-nya rusak — artinya origin pemanggil tidak ada di allowlist (atau
+function-nya memang belum di-deploy). Verifikasi cepat tanpa membuka browser:
+
+```bash
+# 404 = function belum di-deploy
+# 200 = sudah ada; kalau 200 tapi tetap kena CORS, origin-nya yang belum didaftarkan
+curl -i -X OPTIONS https://<ref>.supabase.co/functions/v1/delete-account \
+  -H "Origin: https://todowork.reip.my.id" \
+  -H "Access-Control-Request-Method: POST"
 ```
 
 Catatan penting:

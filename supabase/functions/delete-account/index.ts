@@ -33,6 +33,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.3';
  * deployed domain, so those schemes have to be allowed explicitly or every mobile deletion fails
  * with an opaque CORS error that looks like a server fault.
  *
+ * Production origins are configured through DELETE_ACCOUNT_ALLOWED_ORIGINS rather than hardcoded,
+ * so a Vercel preview with its own hostname does not require a code change. The defaults below
+ * cover local development and the native shells.
+ *
  * An origin not on this list is never echoed back. Reflecting arbitrary origins would let any site
  * a signed-in user visits trigger deletion with their ambient credentials.
  */
@@ -42,13 +46,25 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'capacitor://localhost',
 ];
 
+/**
+ * Normalises an origin for comparison.
+ *
+ * A browser always sends `Origin` as scheme + host + optional port, with **no trailing slash and
+ * no path**. A secret that was typed or copy-pasted as `https://example.com/` would therefore never
+ * match, producing a CORS failure with no useful clue as to why. Trailing slashes are stripped from
+ * both sides so the comparison cannot fail on a difference the user cannot see.
+ */
+function normaliseOrigin(origin: string): string {
+  return origin.trim().replace(/\/+$/, '').toLowerCase();
+}
+
 function allowedOrigins(): string[] {
   const configured = Deno.env.get('DELETE_ACCOUNT_ALLOWED_ORIGINS');
-  if (!configured) return DEFAULT_ALLOWED_ORIGINS;
+  if (!configured) return DEFAULT_ALLOWED_ORIGINS.map(normaliseOrigin);
 
   return configured
     .split(',')
-    .map((origin) => origin.trim())
+    .map(normaliseOrigin)
     .filter((origin) => origin.length > 0);
 }
 
@@ -60,7 +76,9 @@ function corsHeaders(origin: string | null): Record<string, string> {
     Vary: 'Origin',
   };
 
-  if (origin && allowedOrigins().includes(origin)) {
+  // The configured origin is echoed back in its original form, not the normalised one, because the
+  // browser compares the header against the exact value it sent.
+  if (origin && allowedOrigins().includes(normaliseOrigin(origin))) {
     headers['Access-Control-Allow-Origin'] = origin;
   }
 
