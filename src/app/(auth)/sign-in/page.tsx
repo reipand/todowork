@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
+import { GoogleButton } from '@/components/auth/google-button';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/field';
 import { useToast } from '@/components/ui/toast';
@@ -78,6 +79,14 @@ export default function SignInPage() {
           </Link>
         </div>
       ) : null}
+
+      <GoogleButton disabled={!cloudConfigured} />
+
+      <div className="flex items-center gap-3" aria-hidden="true">
+        <span className="h-px flex-1 bg-line" />
+        <span className="text-meta text-ink-muted">or</span>
+        <span className="h-px flex-1 bg-line" />
+      </div>
 
       <form
         onSubmit={(event) => void handleSubmit(event)}

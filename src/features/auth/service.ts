@@ -155,6 +155,49 @@ export async function signInWithEmail(
 }
 
 /**
+ * Sign in with Google (OAuth 2.0).
+ *
+ * Redirects the whole page to Google's consent screen; nothing after the `signInWithOAuth` call
+ * runs in this document. Supabase returns the user to `redirectTo` with credentials in the URL
+ * fragment, which `detectSessionInUrl` on the client then turns into a session — the same
+ * mechanism the email-confirmation flow uses, and the reason a static app needs no server
+ * callback route.
+ *
+ * Registration and sign-in are the same call. A user who has never signed in gets an account
+ * created on first consent (Supabase provisions the user row automatically), so there is
+ * deliberately no separate "sign up with Google" entry point.
+ *
+ * `queryParams.prompt: 'select_account'` forces the account chooser even when the browser already
+ * has a Google session. Without it, a user on a shared machine is silently signed into whoever
+ * last used the browser, which is the wrong default for a task app that may hold work data.
+ */
+export async function signInWithGoogle(redirectPath = '/dashboard'): Promise<AuthResult<null>> {
+  const supabase = getSupabaseClient();
+
+  // Only internal paths are accepted, so a crafted value cannot turn this into an open redirect.
+  const safePath =
+    redirectPath.startsWith('/') && !redirectPath.startsWith('//') ? redirectPath : '/dashboard';
+
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: `${env.NEXT_PUBLIC_APP_URL}/auth/callback?next=${encodeURIComponent(safePath)}`,
+      queryParams: {
+        prompt: 'select_account',
+      },
+    },
+  });
+
+  if (error) {
+    return { ok: false, formError: translateAuthError(error.message, error.code) };
+  }
+
+  // Reaching here means the browser is navigating away to Google. Returning ok keeps the caller's
+  // "busy" state asserted so the form does not flash back to idle during the redirect.
+  return { ok: true, data: null };
+}
+
+/**
  * Signs out.
  *
  * `scope: 'local'` signs out this device only, which is what a user tapping "Sign out" expects.
